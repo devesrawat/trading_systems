@@ -1,0 +1,30 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.git/
+.github/
+
+# Never bake secrets into the image
+.env
+.env.*
+!.env.example
+
+# Dev-only data
+notebooks/
+*.ipynb
+
+# CI artefacts
+htmlcov/
+.coverage
+coverage.xml
+
+# Local logs and model artefacts
+logs/
+mlruns/
+*.pkl
+*.joblib

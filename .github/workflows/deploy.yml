@@ -1,0 +1,188 @@
+name: Deploy
+
+on:
+  # Manual trigger with optional tag override
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Docker image tag to deploy (default: git SHA)"
+        required: false
+        default: ""
+  # Auto-deploy only when CI passes on main
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+
+# Only one deploy at a time — never overlap
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+jobs:
+  # -----------------------------------------------------------------------
+  # Guard: only proceed when the triggering CI run succeeded
+  # -----------------------------------------------------------------------
+  check-ci:
+    name: CI gate
+    runs-on: ubuntu-latest
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      github.event.workflow_run.conclusion == 'success'
+    steps:
+      - run: echo "CI passed — proceeding to build"
+
+  # -----------------------------------------------------------------------
+  # Build & push Docker image to GHCR
+  # -----------------------------------------------------------------------
+  build:
+    name: Build image
+    needs: check-ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write        # needed to push to GHCR
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tags }}
+      short_sha: ${{ steps.sha.outputs.short }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve image tag
+        id: tag
+        run: |
+          INPUT="${{ github.event.inputs.image_tag }}"
+          echo "tag=${INPUT:-${{ steps.sha.outputs.short }}}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=sha,prefix=,format=short
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # Cache layers from the previous build — speeds up subsequent pushes
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:cache
+          cache-to:   type=registry,ref=ghcr.io/${{ github.repository }}:cache,mode=max
+          platforms: linux/amd64,linux/arm64   # supports Hetzner ARM or AWS Graviton
+
+  # -----------------------------------------------------------------------
+  # Deploy to the production VPS via SSH
+  # -----------------------------------------------------------------------
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production    # requires manual approval if configured
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key:      ${{ secrets.DEPLOY_SSH_KEY }}
+          port:     ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            set -euo pipefail
+            cd ~/trading-system
+
+            # Pull latest compose files
+            git fetch --depth=1 origin main
+            git reset --hard origin/main
+
+            # Authenticate with GHCR on the server
+            echo "${{ secrets.GITHUB_TOKEN }}" \
+              | docker login ghcr.io -u ${{ github.actor }} --password-stdin
+
+            # Roll out new image — zero-downtime for stateless services
+            IMAGE_TAG=${{ needs.build.outputs.short_sha }}
+            export IMAGE_TAG
+            export GITHUB_REPOSITORY=${{ github.repository }}
+
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              pull orchestrator scanner live-feed
+
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              up -d --no-build orchestrator scanner live-feed
+
+            # Keep only the last 3 image versions to save disk
+            docker image prune -f --filter "until=72h"
+
+      - name: Smoke test — orchestrator health
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host:     ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key:      ${{ secrets.DEPLOY_SSH_KEY }}
+          port:     ${{ secrets.DEPLOY_PORT || 22 }}
+          script: |
+            cd ~/trading-system
+            # Give containers 15 s to start
+            sleep 15
+            docker compose \
+              -f docker-compose.yml \
+              -f docker-compose.prod.yml \
+              ps --format json | python3 -c "
+            import json, sys
+            services = [json.loads(l) for l in sys.stdin if l.strip()]
+            failed = [s for s in services if s.get('State') not in ('running', 'exited')]
+            if failed:
+                print('FAILED:', [s['Service'] for s in failed])
+                sys.exit(1)
+            print('All services healthy')
+            "
+
+      - name: Notify Telegram on success
+        if: success()
+        uses: appleboy/telegram-action@v0.1.1
+        with:
+          to:      ${{ secrets.TELEGRAM_CHAT_ID }}
+          token:   ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message: |
+            ✅ trading-system deployed
+            SHA: ${{ needs.build.outputs.short_sha }}
+            Actor: ${{ github.actor }}
+
+      - name: Notify Telegram on failure
+        if: failure()
+        uses: appleboy/telegram-action@v0.1.1
+        with:
+          to:    ${{ secrets.TELEGRAM_CHAT_ID }}
+          token: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          message: |
+            ❌ trading-system deploy FAILED
+            SHA: ${{ needs.build.outputs.short_sha }}
+            Actor: ${{ github.actor }}
+            Check: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}

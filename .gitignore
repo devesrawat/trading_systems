@@ -1,27 +1,41 @@
-# Python-generated files
-__pycache__/
-*.py[oc]
-build/
-dist/
-wheels/
-*.egg-info
-
-# Virtual environments
-.venv
-
-# Secrets — never commit
+# Secrets
 .env
+.env.*
+!.env.example
 
-# ML model cache
-.models/
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.venv/
+dist/
+build/
+*.egg-info/
 
-# MLflow local artifacts
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# ML artefacts
 mlruns/
-mlflow.db
+*.pkl
+*.joblib
+*.pt
+*.onnx
 
-# Jupyter
-.ipynb_checkpoints/
-notebooks/*.ipynb
+# IDE
+.idea/
+.vscode/
+*.swp
 
 # OS
 .DS_Store
+Thumbs.db
+
+# Notebooks
+.ipynb_checkpoints/
+
+# TLS certs
+deploy/nginx/certs/
