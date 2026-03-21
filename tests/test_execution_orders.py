@@ -3,7 +3,7 @@ from unittest.mock import MagicMock, patch, call
 
 import pytest
 
-from execution.orders import OrderExecutor, SlippageTier
+from execution.orders import OrderExecutor, SlippageTier, write_live_trade
 
 
 # ---------------------------------------------------------------------------
@@ -200,3 +200,58 @@ class TestSlippageEstimate:
         small = executor.slippage_estimate("RELIANCE", quantity=10, side="BUY",
                                            tier=SlippageTier.SMALL_CAP)
         assert large < mid < small
+
+
+# ---------------------------------------------------------------------------
+# write_live_trade (SEBI audit trail)
+# ---------------------------------------------------------------------------
+
+class TestWriteLiveTrade:
+    def _mock_engine(self):
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value = mock_conn
+        return mock_engine, mock_conn
+
+    def test_executes_insert(self):
+        engine, conn = self._mock_engine()
+        with patch("execution.orders.get_engine", return_value=engine):
+            write_live_trade(
+                symbol="RELIANCE", side="BUY", quantity=10, price=2500.0,
+                order_id="ORD001", tag="signal",
+            )
+        conn.execute.assert_called_once()
+
+    def test_commits_after_insert(self):
+        engine, conn = self._mock_engine()
+        with patch("execution.orders.get_engine", return_value=engine):
+            write_live_trade(
+                symbol="TCS", side="SELL", quantity=5, price=3600.0,
+                order_id="ORD002", tag="exit",
+            )
+        conn.commit.assert_called_once()
+
+    def test_passes_order_id_in_params(self):
+        engine, conn = self._mock_engine()
+        with patch("execution.orders.get_engine", return_value=engine):
+            write_live_trade(
+                symbol="INFY", side="BUY", quantity=8, price=1400.0,
+                order_id="ORD999", tag="test",
+            )
+        _, kwargs = conn.execute.call_args
+        params = conn.execute.call_args[0][1]
+        assert params["order_id"] == "ORD999"
+
+    def test_live_market_order_calls_write_live_trade(self):
+        executor, _ = _make_executor(paper_mode=False)
+        with patch("execution.orders.write_live_trade") as mock_write:
+            executor.place_market_order("RELIANCE", "BUY", quantity=10, tag="test")
+        mock_write.assert_called_once()
+
+    def test_live_limit_order_calls_write_live_trade(self):
+        executor, _ = _make_executor(paper_mode=False)
+        with patch("execution.orders.write_live_trade") as mock_write:
+            executor.place_limit_order("TCS", "BUY", quantity=5, price=3500.0, tag="test")
+        mock_write.assert_called_once()

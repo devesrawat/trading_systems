@@ -17,6 +17,7 @@ from options.iv_features import (
     compute_max_pain,
     IVFeatures,
     build_fo_features,
+    _write_iv_snapshot,
 )
 from options.strategy import FoStrategyEngine, SignalType
 
@@ -257,7 +258,8 @@ class TestBuildFoFeatures:
         kite = self._mock_kite()
         with patch("options.iv_features._fetch_iv_history") as mock_iv, \
              patch("options.iv_features._fetch_option_chain") as mock_oc, \
-             patch("options.iv_features._fetch_underlying_prices") as mock_ul:
+             patch("options.iv_features._fetch_underlying_prices") as mock_ul, \
+             patch("options.iv_features._write_iv_snapshot"):
             mock_iv.return_value = pd.Series([0.15 + i * 0.001 for i in range(252)])
             mock_oc.return_value = (
                 {22000: 500, 22050: 300},  # call_oi
@@ -269,6 +271,18 @@ class TestBuildFoFeatures:
         assert result.symbol == "NIFTY"
         assert 0.0 <= result.iv_rank <= 1.0
         assert result.days_to_expiry >= 0
+
+    def test_build_fo_features_persists_snapshot(self):
+        kite = self._mock_kite()
+        with patch("options.iv_features._fetch_iv_history") as mock_iv, \
+             patch("options.iv_features._fetch_option_chain") as mock_oc, \
+             patch("options.iv_features._fetch_underlying_prices") as mock_ul, \
+             patch("options.iv_features._write_iv_snapshot") as mock_write:
+            mock_iv.return_value = pd.Series([0.20 + i * 0.001 for i in range(252)])
+            mock_oc.return_value = ({22000: 400}, {22000: 500})
+            mock_ul.return_value = pd.Series([22000.0 + i for i in range(30)])
+            build_fo_features("NIFTY", date(2025, 4, 24), kite)
+        mock_write.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -370,3 +384,54 @@ class TestFoStrategyEngine:
         engine.add_position("pos_2")
         with pytest.raises(ValueError):
             engine.add_position("pos_3")
+
+
+# ---------------------------------------------------------------------------
+# _write_iv_snapshot (DB persistence)
+# ---------------------------------------------------------------------------
+
+class TestWriteIvSnapshot:
+    def _sample_features(self) -> IVFeatures:
+        return IVFeatures(
+            symbol="NIFTY",
+            expiry_date=date(2025, 4, 24),
+            iv_rank=0.70,
+            iv_percentile=75.0,
+            iv_premium=0.05,
+            put_call_ratio=1.1,
+            max_pain=22_000,
+            days_to_expiry=7,
+            current_iv=0.22,
+            realized_vol=0.17,
+        )
+
+    def _mock_engine(self):
+        mock_conn = MagicMock()
+        mock_conn.__enter__ = MagicMock(return_value=mock_conn)
+        mock_conn.__exit__ = MagicMock(return_value=False)
+        mock_engine = MagicMock()
+        mock_engine.connect.return_value = mock_conn
+        return mock_engine, mock_conn
+
+    def test_executes_insert(self):
+        features = self._sample_features()
+        engine, conn = self._mock_engine()
+        with patch("data.store.get_engine", return_value=engine):
+            _write_iv_snapshot(features)
+        conn.execute.assert_called_once()
+        conn.commit.assert_called_once()
+
+    def test_params_include_symbol_and_expiry(self):
+        features = self._sample_features()
+        engine, conn = self._mock_engine()
+        with patch("data.store.get_engine", return_value=engine):
+            _write_iv_snapshot(features)
+        params = conn.execute.call_args[0][1]
+        assert params["symbol"] == "NIFTY"
+        assert params["expiry_date"] == date(2025, 4, 24)
+
+    def test_db_error_does_not_propagate(self):
+        """Snapshot write failures must never crash signal generation."""
+        features = self._sample_features()
+        with patch("data.store.get_engine", side_effect=Exception("DB down")):
+            _write_iv_snapshot(features)  # must not raise

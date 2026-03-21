@@ -73,14 +73,15 @@ class TestGetPnl:
 
     def test_record_realized_pnl(self):
         monitor, _ = _make_monitor()
-        monitor.record_realized(symbol="HDFC", pnl=5000.0)
+        with patch.object(monitor, "_persist"):
+            monitor.record_realized(symbol="HDFC", pnl=5000.0)
         pnl = monitor.get_pnl()
         assert pnl["realized"] == 5000.0
 
     def test_total_is_realized_plus_unrealized(self):
         monitor, _ = _make_monitor()
-        monitor.record_realized("HDFC", 3000.0)
         with patch.object(monitor, "_persist"):
+            monitor.record_realized("HDFC", 3000.0)
             monitor.update_position("RELIANCE", qty=5, avg_price=2000.0, current_price=2200.0)
         pnl = monitor.get_pnl()
         assert pnl["total"] == pytest.approx(3000.0 + 1000.0)
