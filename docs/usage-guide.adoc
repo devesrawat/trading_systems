@@ -1,0 +1,310 @@
+= NSE Algorithmic Trading System — Usage Guide
+:toc: left
+:toc-title: Contents
+:toclevels: 3
+:icons: font
+:source-highlighter: highlight.js
+
+A walk-forward XGBoost signal model backed by FinBERT sentiment, connected to Zerodha Kite Connect, with hard risk guardrails enforced by a circuit breaker.
+
+---
+
+== Prerequisites
+
+=== Infrastructure
+
+[cols="1,2,2", options="header"]
+|===
+| Service | Purpose | Default address
+
+| TimescaleDB (PostgreSQL) | OHLCV data, trades, signals, audit log | `localhost:5432`
+| Redis | Tick cache, circuit-breaker state, access token | `localhost:6379`
+| MLflow | Experiment tracking, model registry | `localhost:5001`
+|===
+
+Start all three with Docker Compose:
+
+[source,bash]
+----
+docker compose up -d timescaledb redis mlflow
+----
+
+Initialise the schema (hypertables + audit tables) once after first launch:
+
+[source,bash]
+----
+python -m data.store --init-schema
+----
+
+=== Python
+
+Requires Python ≥ 3.13. Install dependencies with `uv` (recommended) or `pip`:
+
+[source,bash]
+----
+uv sync
+# or
+pip install -e ".[dev]"
+----
+
+=== Environment variables
+
+Copy the example file and fill in at minimum the three *REQUIRED* fields:
+
+[source,bash]
+----
+cp .env.example .env
+----
+
+[source,dotenv]
+----
+KITE_API_KEY=your_api_key_here
+KITE_API_SECRET=your_api_secret_here
+TIMESCALE_URL=postgresql://trader:password@localhost:5432/nse_trading
+REDIS_URL=redis://localhost:6379/0
+MLFLOW_TRACKING_URI=http://localhost:5001
+----
+
+See link:env-variables.adoc[env-variables.adoc] for the full variable reference.
+
+---
+
+== First-time setup
+
+=== 1. Kite login
+
+The system needs a valid Kite access token before it can fetch market data or place orders. Run the login command once to generate and cache the first token:
+
+[source,bash]
+----
+python -m data.ingest --login
+----
+
+You will be redirected to the Zerodha login page in a browser. After authorising, the `request_token` from the redirect URL is exchanged for a session token and stored in Redis. Subsequent logins are handled automatically each morning at 08:45 IST.
+
+=== 2. Initialise instrument universe
+
+Download NSE instrument metadata and persist it locally:
+
+[source,bash]
+----
+python -m data.universe --refresh
+----
+
+This fetches the instrument list from Kite Connect and writes it to the database. Re-run whenever NSE adds or removes instruments (typically at weekends).
+
+=== 3. Backfill historical OHLCV
+
+Pull daily bars for the top 50 liquid instruments (approx. 3 years by default):
+
+[source,bash]
+----
+python -m data.ingest --backfill --days 1095
+----
+
+The backfill uses the current universe list and writes to the `ohlcv_daily` hypertable. This can take 10–20 minutes on first run.
+
+---
+
+== Paper trading (recommended starting point)
+
+Paper mode is the default. Orders are logged to the `paper_trades` table and never sent to Kite.
+
+=== Start the system
+
+[source,bash]
+----
+python -m orchestrator.main
+----
+
+The scheduler starts and immediately logs the registered jobs. If it is not currently a market day or within trading hours, all scheduled jobs will fire at their next scheduled time. You can see the schedule in <<_daily_schedule>>.
+
+The process runs until interrupted with `Ctrl+C`.
+
+=== Verify it is working
+
+[source,bash]
+----
+# Check recent paper trades
+python -m execution.logger --summary --date today
+
+# Check circuit breaker state
+python -m risk.breakers --status
+
+# Check active signal model
+python -m signals.model --status
+----
+
+=== Accumulate paper trades
+
+The system logs every signal and every order to `paper_trades`. After 200 or more paper trades, review the metrics:
+
+[source,bash]
+----
+python -m execution.logger --summary --days 30
+----
+
+A win rate above 50 % and a mean P&L per trade above transaction costs is the minimum bar before considering live trading.
+
+---
+
+== Live trading
+
+[WARNING]
+====
+Live mode places real orders with real money. Do not enable it until:
+
+. 200+ paper trades completed with satisfactory metrics
+. `DAILY_DD_LIMIT` and `MAX_POSITION_PCT` reviewed in `.env`
+. Circuit breaker behaviour tested in paper mode (verify it halts correctly)
+====
+
+=== Enable live trading
+
+In `.env`, set:
+
+[source,dotenv]
+----
+PAPER_TRADE_MODE=false
+----
+
+Then restart the system:
+
+[source,bash]
+----
+python -m orchestrator.main
+----
+
+The startup log will emit `live_trading_mode_active` to confirm. Every order placed in live mode is written to `live_trades` for audit.
+
+---
+
+== Daily schedule
+
+All times are IST (Asia/Kolkata).
+
+[cols="1,2,3", options="header"]
+|===
+| Time | Job | What it does
+
+| 08:30 (Mon only)
+| Weekly reset
+| Resets the weekly circuit-breaker baseline to current capital.
+
+| 08:45
+| Pre-market setup
+| Refreshes Kite access token, runs FinBERT sentiment pipeline, loads latest model from MLflow registry.
+
+| 09:15 – 15:25 (every 5 min)
+| Trading loop
+| Fetches features for the universe, scores with XGBoost, checks circuit breaker, sizes positions, places orders.
+
+| 15:35
+| Post-market summary
+| Logs daily P&L and trade count via Telegram (if configured), checks for model drift.
+
+| 02:00 (Sun only)
+| Retrain check
+| Flags if live win rate has drifted below threshold; does not retrain automatically.
+|===
+
+---
+
+== Model training
+
+=== Train from scratch
+
+[source,bash]
+----
+python -m signals.train --symbol RELIANCE --start 2021-01-01 --end 2024-01-01
+----
+
+Uses walk-forward cross-validation (24-month train, 3-month test, 5-day purge gap). Results and the best model are logged to MLflow.
+
+=== Register the model for production
+
+After reviewing the run in the MLflow UI (`http://localhost:5001`), promote the model to the `Production` stage:
+
+[source,bash]
+----
+python -m signals.model --register --run-id <mlflow_run_id> --alias production
+----
+
+The orchestrator loads the `production` model alias at each pre-market setup. The old model stays in the registry under its run ID for rollback.
+
+=== Retrain trigger
+
+The Sunday retrain check compares the live 30-day win rate against the backtest baseline. If drift exceeds the threshold (`_MIN_RETRAIN_WIN_RATE = 0.50` in `orchestrator/main.py`), a Telegram alert is sent. Retraining is manual — run the train command above and re-register.
+
+---
+
+== Circuit breaker
+
+The circuit breaker halts all new orders when any of three conditions is met:
+
+[cols="1,3", options="header"]
+|===
+| Condition | Default limit
+
+| Daily drawdown | 3 % of daily starting capital (`DAILY_DD_LIMIT`)
+| Weekly drawdown | 7 % of weekly starting capital (`WEEKLY_DD_LIMIT`)
+| Consecutive losses | 5 losses in a row (`max_consecutive_losses` in `risk/breakers.py`)
+|===
+
+=== Check status
+
+[source,bash]
+----
+python -m risk.breakers --status
+----
+
+=== Manual reset
+
+Drawdown halts **never** auto-reset. After investigating the cause:
+
+[source,bash]
+----
+python -m risk.breakers --reset
+----
+
+This updates both daily and weekly baselines to current capital and clears the halt. An audit record is written to `circuit_events`. The weekly reset on Monday morning does *not* clear a halt — `--reset` must be called explicitly.
+
+---
+
+== Running tests
+
+[source,bash]
+----
+uv run pytest
+----
+
+The suite requires no external services — all DB, Redis, and Kite calls are mocked. Coverage must stay above 80 %.
+
+To run a specific module:
+
+[source,bash]
+----
+uv run pytest tests/test_risk_breakers.py -v
+----
+
+---
+
+== Project layout
+
+[source]
+----
+trading-system/
+├── config/          Settings and .env loading (pydantic-settings)
+├── data/            Kite ingestor, TimescaleDB store, data cleaning, universe
+├── signals/         Feature engineering, XGBoost training, model registry
+├── llm/             FinBERT sentiment pipeline, Finnhub/NewsAPI fetchers
+├── risk/            Circuit breaker, position sizer, portfolio monitor
+├── execution/       Order executor (paper + live), trade logger
+├── options/         F&O options model (Black-Scholes + IV surface)
+├── backtest/        Walk-forward backtester, cost model, metrics
+├── monitoring/      Telegram alerter, MLflow drift tracker
+├── orchestrator/    TradingSystem entry point, APScheduler jobs
+├── migrations/      Alembic schema migrations
+├── tests/           Pytest unit tests (390+, 88 % coverage)
+└── docs/            This guide, env-variables reference
+----

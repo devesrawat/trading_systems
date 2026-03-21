@@ -1,0 +1,61 @@
+# Strategy parameters — edit these to tune signal thresholds and risk controls
+# DO NOT change risk limits below minimum safe values
+
+signal:
+  threshold: 0.65               # minimum XGBoost P(+2% in 5d) to enter
+  forward_return_target: 0.02   # label: +2% in 5 days
+  forward_days: 5
+
+risk:
+  max_position_pct: 0.02        # 2% of capital hard cap
+  daily_dd_limit: 0.03          # 3% daily drawdown → circuit break
+  weekly_dd_limit: 0.07         # 7% weekly drawdown → kill switch
+  max_consecutive_losses: 5
+  kelly_fraction: 0.5           # half-Kelly always
+
+universe:
+  min_avg_volume: 500000        # 20-day avg volume filter
+  max_positions: 10             # max concurrent open positions
+  segment: "EQ"
+
+features:
+  rsi_period_fast: 7
+  rsi_period_slow: 14
+  macd_fast: 12
+  macd_slow: 26
+  macd_signal: 9
+  bb_period: 20
+  bb_std: 2.0
+  atr_period: 14
+  ema_periods: [9, 21, 50]
+  vol_lookback_short: 10
+  vol_lookback_long: 20
+  regime_lookback: 60
+
+model:
+  train_months: 24
+  test_months: 3
+  purge_days: 5
+  n_estimators: 500
+  learning_rate: 0.05
+  max_depth: 6
+  min_child_weight: 50
+  subsample: 0.8
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 0.1
+
+backtest:
+  min_sharpe: 1.5
+  max_drawdown: 0.15
+  min_profit_factor: 2.0
+  min_win_rate: 0.52
+  min_trades: 100
+  risk_free_rate: 0.065         # India 10Y G-Sec
+
+fo:
+  iv_rank_sell_threshold: 0.70
+  iv_rank_buy_threshold: 0.30
+  iv_premium_threshold: 0.05
+  max_concurrent_positions: 3
+  delta_tolerance: 0.10

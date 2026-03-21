@@ -1,0 +1,211 @@
+= Environment Variables Reference
+:toc: left
+:toc-title: Contents
+:toclevels: 2
+:icons: font
+:source-highlighter: highlight.js
+
+Configuration is loaded from a `.env` file in the project root.
+Copy `.env.example` to `.env` and fill in the required values before starting the system.
+
+[source,bash]
+----
+cp .env.example .env
+----
+
+Variables marked *REQUIRED* will cause a startup failure if absent.
+Variables marked _optional_ have sensible defaults and the system degrades gracefully without them.
+
+---
+
+== Zerodha Kite
+
+Connection credentials for the https://kite.trade/docs/connect/v3/[Kite Connect v3 API].
+
+[cols="2,1,1,4", options="header"]
+|===
+| Variable | Type | Required | Description
+
+| `KITE_API_KEY`
+| `string`
+| *REQUIRED*
+| API key issued by Kite Connect for your app. Found at https://developers.kite.trade.
+
+| `KITE_API_SECRET`
+| `string`
+| *REQUIRED*
+| Secret paired with `KITE_API_KEY`. Never expose this in logs or source control.
+
+| `KITE_ACCESS_TOKEN`
+| `string`
+| _optional_
+| Short-lived session token. Refreshed automatically each morning via the login flow and cached in Redis. Leave blank on first run.
+|===
+
+.How to obtain
+[NOTE]
+====
+. Create an app at https://developers.kite.trade and copy the API key and secret.
+. Run the daily login script once to generate the first access token:
++
+[source,bash]
+----
+python -m data.ingest --login
+----
+After that, the orchestrator refreshes the token automatically at 08:45 IST.
+====
+
+---
+
+== Database
+
+[cols="2,1,1,4", options="header"]
+|===
+| Variable | Type | Required | Description
+
+| `TIMESCALE_URL`
+| `string`
+| *REQUIRED*
+| PostgreSQL connection string for TimescaleDB.
+  Default: `postgresql://trader:password@localhost:5432/nse_trading`
+
+| `REDIS_URL`
+| `string`
+| *REQUIRED*
+| Redis connection string used for live tick cache, portfolio state, and access token storage.
+  Default: `redis://localhost:6379/0`
+|===
+
+.Local setup with Docker
+[TIP]
+====
+[source,bash]
+----
+docker compose up -d timescaledb redis
+python -m data.store --init-schema   # creates hypertables
+----
+====
+
+---
+
+== News APIs
+
+Used by the FinBERT sentiment pipeline (`llm/`). Both are optional — the system falls back to neutral sentiment (score = 0) if neither key is present.
+
+[cols="2,1,1,4", options="header"]
+|===
+| Variable | Type | Required | Description
+
+| `FINNHUB_API_KEY`
+| `string`
+| _optional_
+| API key for https://finnhub.io[Finnhub] news and company headlines.
+
+| `NEWSAPI_KEY`
+| `string`
+| _optional_
+| API key for https://newsapi.org[NewsAPI] (Moneycontrol RSS is also used as a free fallback).
+|===
+
+---
+
+== Monitoring
+
+[cols="2,1,1,4", options="header"]
+|===
+| Variable | Type | Required | Description
+
+| `TELEGRAM_BOT_TOKEN`
+| `string`
+| _optional_
+| Token for the Telegram bot that sends trade alerts and circuit-breaker notifications.
+  Create a bot via https://t.me/BotFather[@BotFather].
+
+| `TELEGRAM_CHAT_ID`
+| `string`
+| _optional_
+| Chat or group ID where the bot sends messages.
+  Obtain by messaging https://t.me/userinfobot[@userinfobot].
+
+| `MLFLOW_TRACKING_URI`
+| `string`
+| *REQUIRED*
+| URI for the MLflow tracking server used for experiment logging and model registry.
+  Default: `http://localhost:5001`
+  Start locally: `docker compose up -d mlflow`
+|===
+
+---
+
+== Strategy & Risk
+
+Hard limits are enforced by validators in `config/settings.py` — values above the ceiling raise a startup error.
+
+[cols="2,1,1,1,4", options="header"]
+|===
+| Variable | Type | Default | Ceiling | Description
+
+| `SIGNAL_THRESHOLD`
+| `float`
+| `0.65`
+| —
+| Minimum XGBoost probability required to generate a buy/sell signal.
+  Range: 0.5 – 1.0
+
+| `MAX_POSITION_PCT`
+| `float`
+| `0.02`
+| *0.02 (2%)*
+| Maximum capital allocated to a single position as a fraction of total capital.
+  Hard cap enforced; cannot be raised.
+
+| `DAILY_DD_LIMIT`
+| `float`
+| `0.03`
+| *0.05 (5%)*
+| Daily drawdown limit as a fraction of daily starting capital.
+  Breaching this halts trading for the rest of the day.
+
+| `WEEKLY_DD_LIMIT`
+| `float`
+| `0.07`
+| —
+| Weekly drawdown limit as a fraction of weekly starting capital.
+  Breaching this halts trading until manual reset on Monday.
+
+| `PAPER_TRADE_MODE`
+| `bool`
+| `true`
+| —
+| When `true`, orders are simulated and written to `paper_trades` only.
+  Set to `false` only after completing ≥ 200 paper trades with satisfactory metrics.
+|===
+
+[WARNING]
+====
+`MAX_POSITION_PCT` above `0.02` and `DAILY_DD_LIMIT` above `0.05` are rejected at startup.
+These are non-negotiable risk constraints.
+====
+
+---
+
+== Minimal `.env` for local development
+
+[source,dotenv]
+----
+# Required — replace with real values
+KITE_API_KEY=your_api_key_here
+KITE_API_SECRET=your_api_secret_here
+
+# Local Docker defaults — no change needed if using docker compose
+TIMESCALE_URL=postgresql://trader:password@localhost:5432/nse_trading
+REDIS_URL=redis://localhost:6379/0
+MLFLOW_TRACKING_URI=http://localhost:5001
+
+# Safe defaults for paper trading
+SIGNAL_THRESHOLD=0.65
+MAX_POSITION_PCT=0.02
+DAILY_DD_LIMIT=0.03
+WEEKLY_DD_LIMIT=0.07
+PAPER_TRADE_MODE=true
+----

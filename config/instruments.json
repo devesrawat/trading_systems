@@ -1,0 +1,5 @@
+{
+  "_comment": "NSE500 instrument token list. Run data/universe.py refresh_instruments() to populate from Kite API.",
+  "last_updated": null,
+  "instruments": []
+}
