@@ -11,7 +11,7 @@ Design constraints:
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from threading import Semaphore
 from typing import Any
@@ -34,7 +34,8 @@ log = structlog.get_logger(__name__)
 # Kite allows 3 historical requests per second per user
 _KITE_RPS = 3
 _BATCH_SIZE = 500        # rows to accumulate before a DB flush
-_MAX_WORKERS = 6         # threads — half wait on API, half wait on DB
+_MAX_WORKERS = 8         # threads fetching from Kite API
+_DB_WORKERS  = 2         # threads writing to DB concurrently with API fetches
 
 
 # ---------------------------------------------------------------------------
@@ -207,11 +208,12 @@ def bulk_ingest(
     -------
     dict mapping symbol → rows written (0 = skipped or error)
     """
-    limiter  = _RateLimiter(_KITE_RPS)
+    limiter      = _RateLimiter(_KITE_RPS)
     results: dict[str, int] = {}
     pending_rows: list[dict] = []
     total_written = 0
-    total = len(instruments)
+    total         = len(instruments)
+    flush_futures: list[Future] = []
 
     log.info(
         "bulk_ingest_start",
@@ -220,40 +222,47 @@ def bulk_ingest(
         to_date=str(to_date),
         interval=interval,
         workers=_MAX_WORKERS,
+        db_workers=_DB_WORKERS,
     )
 
-    with ThreadPoolExecutor(max_workers=_MAX_WORKERS) as pool:
-        futures = {
-            pool.submit(
+    # Two thread pools: one for API fetches, one for DB writes.
+    # DB writes overlap with ongoing API fetches instead of blocking them.
+    with ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="kite") as fetch_pool, \
+         ThreadPoolExecutor(max_workers=_DB_WORKERS,  thread_name_prefix="db")   as db_pool:
+
+        fetch_futures = {
+            fetch_pool.submit(
                 _fetch_one, ingestor, limiter, inst, from_date, to_date, interval
             ): inst["tradingsymbol"]
             for inst in instruments
         }
 
         done = 0
-        for future in as_completed(futures):
+        for future in as_completed(fetch_futures):
             symbol, count, rows = future.result()
             results[symbol] = count
             pending_rows.extend(rows)
             done += 1
 
-            # Flush when batch is full
+            # Dispatch a non-blocking flush when batch is full
             if len(pending_rows) >= _BATCH_SIZE:
-                written = _flush(pending_rows)
-                total_written += written
+                batch = pending_rows[:]
                 pending_rows.clear()
+                flush_futures.append(db_pool.submit(_flush, batch))
                 log.info(
                     "bulk_ingest_progress",
                     done=done,
                     total=total,
-                    flushed=written,
-                    total_written=total_written,
+                    queued_rows=len(batch),
                 )
 
-    # Flush remainder
-    if pending_rows:
-        written = _flush(pending_rows)
-        total_written += written
+        # Flush remainder (still non-blocking — wait below)
+        if pending_rows:
+            flush_futures.append(db_pool.submit(_flush, pending_rows))
+
+        # Wait for all DB writes and accumulate written counts
+        for ff in flush_futures:
+            total_written += ff.result()
 
     log.info(
         "bulk_ingest_complete",

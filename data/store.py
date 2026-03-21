@@ -39,8 +39,8 @@ def get_engine() -> Engine:
         _engine = create_engine(
             settings.timescale_url,
             poolclass=QueuePool,
-            pool_size=5,
-            max_overflow=10,
+            pool_size=10,       # raised from 5 — bulk_ingest uses up to 6 threads
+            max_overflow=20,    # raised from 10 — scanner fan-out needs headroom
             pool_pre_ping=True,
         )
         log.info("db_engine_created", url=settings.timescale_url)
