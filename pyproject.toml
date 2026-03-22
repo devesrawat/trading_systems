@@ -76,5 +76,11 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 addopts = "--cov=. --cov-report=term-missing --cov-fail-under=80"
 
+[tool.coverage.run]
+omit = [
+    "main.py",
+    "migrations/*",
+]
+
 [tool.hatch.build.targets.wheel]
 packages = ["data", "signals", "llm", "risk", "execution", "backtest", "options", "orchestrator", "monitoring"]
