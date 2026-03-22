@@ -235,7 +235,7 @@ class TestStatePersistence:
             cb._persist_state()
         mock_redis.set.assert_called_once()
         key, value = mock_redis.set.call_args[0]
-        assert key == "circuit:state"
+        assert key == "trading:risk:circuit:state"
         state = json.loads(value)
         assert "halted" in state
         assert "daily_start_capital" in state

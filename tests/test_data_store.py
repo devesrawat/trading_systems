@@ -67,7 +67,7 @@ class TestTickCache:
 
         mock_redis.setex.assert_called_once()
         args = mock_redis.setex.call_args[0]
-        assert args[0] == "tick:256265"
+        assert args[0] == "trading:tick:256265"
         assert args[1] == 5  # TTL
         assert "last_price" in args[2]
 

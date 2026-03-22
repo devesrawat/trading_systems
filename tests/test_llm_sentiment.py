@@ -223,5 +223,5 @@ class TestRedisCache:
 
         mock_redis.setex.assert_called_once()
         call_args = mock_redis.setex.call_args[0]
-        assert "sentiment:TCS:2024-01-15" == call_args[0]
+        assert "trading:sentiment:TCS:2024-01-15" == call_args[0]
         assert call_args[1] == 3600  # 1 hour TTL

@@ -6,6 +6,7 @@ import pandas as pd
 import pytest
 
 from data.ingest import VALID_INTERVALS, KiteIngestor
+from data.providers.base import OHLCVProvider
 
 
 # ---------------------------------------------------------------------------
@@ -33,7 +34,7 @@ def ingestor(mock_kite_cls):
 
 class TestDateChunks:
     def test_day_interval_single_chunk(self):
-        chunks = KiteIngestor._date_chunks(date(2022, 1, 1), date(2024, 1, 1), "day")
+        chunks = OHLCVProvider._date_chunks(date(2022, 1, 1), date(2024, 1, 1), "day")
         assert len(chunks) == 1
         assert chunks[0][0] == date(2022, 1, 1)
         assert chunks[0][1] == date(2024, 1, 1)
@@ -41,7 +42,7 @@ class TestDateChunks:
     def test_minute_interval_splits_into_chunks(self):
         from_date = datetime(2024, 1, 1)
         to_date = datetime(2024, 6, 1)
-        chunks = KiteIngestor._date_chunks(from_date, to_date, "minute")
+        chunks = OHLCVProvider._date_chunks(from_date, to_date, "minute", chunk_days=60)
         assert len(chunks) > 1
         # Each chunk covers at most 60 days
         for start, end in chunks:
@@ -51,14 +52,14 @@ class TestDateChunks:
     def test_chunks_cover_full_range(self):
         from_date = datetime(2024, 1, 1)
         to_date = datetime(2024, 6, 1)
-        chunks = KiteIngestor._date_chunks(from_date, to_date, "5minute")
+        chunks = OHLCVProvider._date_chunks(from_date, to_date, "5minute", chunk_days=60)
         assert chunks[0][0] == from_date
         assert chunks[-1][1] >= to_date - pd.Timedelta(days=1)
 
     def test_short_range_single_chunk(self):
         from_date = datetime(2024, 1, 1)
         to_date = datetime(2024, 1, 30)
-        chunks = KiteIngestor._date_chunks(from_date, to_date, "minute")
+        chunks = OHLCVProvider._date_chunks(from_date, to_date, "minute", chunk_days=60)
         assert len(chunks) == 1
 
 
@@ -124,5 +125,5 @@ class TestRefreshAccessToken:
             token = ingestor.refresh_access_token("request_token_xyz")
 
         assert token == "new_token_abc"
-        mock_redis.set.assert_called_with("kite:access_token", "new_token_abc")
+        mock_redis.set.assert_called_with("trading:auth:kite:access_token", "new_token_abc")
         kite_instance.set_access_token.assert_called_with("new_token_abc")
