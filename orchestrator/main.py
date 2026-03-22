@@ -328,7 +328,8 @@ class TradingSystem:
 
     def _get_cached_token(self) -> str | None:
         from data.store import get_redis
-        return get_redis().get("kite:access_token")
+        from data.redis_keys import RedisKeys
+        return get_redis().get(RedisKeys.KITE_ACCESS_TOKEN)
 
     def _check_model_drift(self) -> None:
         """Warn if rolling 20-trade win rate has dropped below minimum threshold."""

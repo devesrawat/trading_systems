@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Callable
 from urllib.parse import urlencode
 
@@ -92,11 +92,11 @@ class UpstoxProvider(OHLCVProvider):
     def __init__(
         self,
         api_key: str,
-        access_token: str,
+        access_token: str | None = None,
         redirect_uri: str = "http://localhost:8080",
     ) -> None:
         self._api_key = api_key
-        self._access_token = access_token
+        self._access_token = access_token or ""
         self._redirect_uri = redirect_uri
         self._ws_app = None
         self._ws_thread: threading.Thread | None = None
@@ -139,7 +139,7 @@ class UpstoxProvider(OHLCVProvider):
             )
 
         upstox_interval = _INTERVAL_MAP.get(interval, interval)
-        chunks = _date_chunks(from_date, to_date, interval)
+        chunks = self._date_chunks(from_date, to_date, interval, _INTRADAY_CHUNK_DAYS)
         frames: list[pd.DataFrame] = []
 
         for chunk_from, chunk_to in chunks:
@@ -339,33 +339,6 @@ class UpstoxProvider(OHLCVProvider):
 
 def _to_date_str(d: date | datetime) -> str:
     return (d.date() if isinstance(d, datetime) else d).isoformat()
-
-
-def _date_chunks(
-    from_date: date | datetime,
-    to_date: date | datetime,
-    interval: str,
-) -> list[tuple[date | datetime, date | datetime]]:
-    """Split a date range into ≤100-day chunks for intraday intervals."""
-    if interval == "day":
-        return [(from_date, to_date)]
-
-    current = (
-        from_date
-        if isinstance(from_date, datetime)
-        else datetime.combine(from_date, datetime.min.time())
-    )
-    end = (
-        to_date
-        if isinstance(to_date, datetime)
-        else datetime.combine(to_date, datetime.max.time())
-    )
-    chunks: list[tuple[date | datetime, date | datetime]] = []
-    while current < end:
-        chunk_end = min(current + timedelta(days=_INTRADAY_CHUNK_DAYS), end)
-        chunks.append((current, chunk_end))
-        current = chunk_end + timedelta(seconds=1)
-    return chunks
 
 
 def _try_load_protobuf_decoder() -> Callable[[bytes], list[dict]] | None:

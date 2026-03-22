@@ -20,12 +20,7 @@ from typing import Any
 import pandas as pd
 import structlog
 
-from data.clean import (
-    fill_missing_bars,
-    flag_circuit_limit_days,
-    remove_outliers,
-    validate_ohlcv,
-)
+from data.clean import prepare_ohlcv
 
 log = structlog.get_logger(__name__)
 
@@ -58,26 +53,7 @@ class BaseStrategy(ABC):
         Called by the engine before scan(). Returns None when data is
         too dirty or too short to be useful.
         """
-        is_valid, issues = validate_ohlcv(df)
-        if not is_valid:
-            return None
-
-        df = df.set_index("time")
-        df = remove_outliers(df, col="close", method="zscore", threshold=4.0)
-        df = remove_outliers(df, col="volume", method="zscore", threshold=4.0)
-
-        if self.interval == "day":
-            df = fill_missing_bars(df, interval="day")
-            df = flag_circuit_limit_days(df)
-            df = df[~df["circuit_hit"]].drop(columns=["circuit_hit"])
-
-        if "is_filled" in df.columns:
-            df = df.drop(columns=["is_filled"])
-
-        if len(df) < self.min_bars:
-            return None
-
-        return df
+        return prepare_ohlcv(df, interval=self.interval, min_bars=self.min_bars)
 
     # ------------------------------------------------------------------
     # Strategy logic  (must be implemented by every subclass)

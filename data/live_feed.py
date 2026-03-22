@@ -46,6 +46,7 @@ from typing import Any, Callable
 import structlog
 from kiteconnect import KiteTicker
 
+from data.redis_keys import RedisKeys
 from data.store import get_engine, get_redis, write_ohlcv
 from sqlalchemy import text
 import pandas as pd
@@ -275,7 +276,7 @@ class _TickProcessor:
                 continue
 
             # Batch Redis tick update (one pipeline, not N round-trips)
-            pipe.setex(f"tick:{token}", _TICK_TTL_SEC, json.dumps(tick))
+            pipe.setex(RedisKeys.tick(token), _TICK_TTL_SEC, json.dumps(tick))
 
             # Update live day bar from MODE_QUOTE fields if present
             if "ohlc" in tick:

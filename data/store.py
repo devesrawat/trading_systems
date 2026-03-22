@@ -19,6 +19,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
 
 from config.settings import settings
+from data.redis_keys import RedisKeys
 
 log = structlog.get_logger(__name__)
 
@@ -75,6 +76,12 @@ def init_schema() -> None:
 
 _OHLCV_COLS = ["time", "token", "symbol", "open", "high", "low", "close", "volume", "interval"]
 
+_OHLCV_UPSERT = text("""
+    INSERT INTO ohlcv (time, token, symbol, open, high, low, close, volume, interval)
+    VALUES (:time, :token, :symbol, :open, :high, :low, :close, :volume, :interval)
+    ON CONFLICT DO NOTHING
+""")
+
 
 def get_ohlcv(
     token: int,
@@ -109,20 +116,25 @@ def write_ohlcv(df: pd.DataFrame) -> None:
     """Bulk upsert OHLCV rows — conflict on (time, token, interval)."""
     if df.empty:
         return
-
-    engine = get_engine()
     records = _df_to_records(df)
-
-    upsert_sql = text("""
-        INSERT INTO ohlcv (time, token, symbol, open, high, low, close, volume, interval)
-        VALUES (:time, :token, :symbol, :open, :high, :low, :close, :volume, :interval)
-        ON CONFLICT DO NOTHING
-    """)
-
-    with engine.connect() as conn:
-        conn.execute(upsert_sql, records)
-        conn.commit()
+    write_ohlcv_records(records)
     log.debug("ohlcv_written", rows=len(records))
+
+
+def write_ohlcv_records(records: list[dict]) -> int:
+    """
+    Bulk upsert pre-formatted OHLCV dicts.  Returns the row count written.
+
+    Prefer :func:`write_ohlcv` when you have a DataFrame.  Use this
+    function when you already have a list of dicts (e.g. bulk ingest
+    workers that accumulate rows across multiple symbols before flushing).
+    """
+    if not records:
+        return 0
+    with get_engine().connect() as conn:
+        conn.execute(_OHLCV_UPSERT, records)
+        conn.commit()
+    return len(records)
 
 
 def _df_to_records(df: pd.DataFrame) -> list[dict[str, Any]]:
@@ -141,7 +153,7 @@ _TICK_TTL_SECONDS = 5
 def get_latest_tick(token: int) -> dict[str, Any] | None:
     """Return the most recent tick for a token from Redis, or None."""
     r = get_redis()
-    raw = r.get(f"tick:{token}")
+    raw = r.get(RedisKeys.tick(token))
     if raw is None:
         return None
     return json.loads(raw)
@@ -150,7 +162,7 @@ def get_latest_tick(token: int) -> dict[str, Any] | None:
 def write_tick(token: int, tick: dict[str, Any]) -> None:
     """Cache a live tick in Redis with a short TTL."""
     r = get_redis()
-    r.setex(f"tick:{token}", _TICK_TTL_SECONDS, json.dumps(tick))
+    r.setex(RedisKeys.tick(token), _TICK_TTL_SECONDS, json.dumps(tick))
 
 
 # ---------------------------------------------------------------------------

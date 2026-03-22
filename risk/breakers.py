@@ -13,12 +13,13 @@ import json
 import structlog
 from sqlalchemy import text
 
+from data.redis_keys import RedisKeys
 from data.store import get_engine, get_redis
 from monitoring.alerts import TelegramAlerter
 
 log = structlog.get_logger(__name__)
 
-_REDIS_KEY = "circuit:state"
+_REDIS_KEY = RedisKeys.CIRCUIT_STATE
 
 
 class CircuitBreaker:

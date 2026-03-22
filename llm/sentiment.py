@@ -14,6 +14,7 @@ import structlog
 import torch
 from transformers import pipeline
 
+from data.redis_keys import RedisKeys
 from data.store import get_redis
 
 log = structlog.get_logger(__name__)
@@ -137,9 +138,9 @@ class FinBERTScorer:
         """
         score_aggregate() with Redis caching.
 
-        Cache key: sentiment:{symbol}:{date}  TTL: 1 hour
+        Cache key: ``RedisKeys.sentiment(symbol, date)``  TTL: 1 hour
         """
-        cache_key = f"sentiment:{symbol}:{date}"
+        cache_key = RedisKeys.sentiment(symbol, date)
         r = get_redis()
 
         cached = r.get(cache_key)

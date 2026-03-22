@@ -14,6 +14,7 @@ import structlog
 from sqlalchemy import text
 
 from config.settings import settings
+from data.redis_keys import RedisKeys
 from data.store import get_engine, get_redis
 from llm.sentiment import FinBERTScorer
 from llm.sources import FinnhubFetcher, MoneycontrolRSS, merge_and_rank
@@ -144,7 +145,7 @@ class SentimentPipeline:
         Lookup order: Redis cache → TimescaleDB → 0.0 (neutral fallback).
         """
         today_str = datetime.utcnow().strftime("%Y-%m-%d")
-        cache_key = f"sentiment:{symbol}:{today_str}"
+        cache_key = RedisKeys.sentiment(symbol, today_str)
 
         r = get_redis()
         cached = r.get(cache_key)

@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     telegram_chat_id: Optional[str] = None
     mlflow_tracking_uri: str = "http://localhost:5001"
 
+    # Performance tuning — override in .env to tune for your hardware/tier
+    kite_rps: int = 3                  # Kite API: max historical requests/second
+    bulk_ingest_batch_size: int = 500  # OHLCV rows to accumulate before a DB flush
+    bulk_ingest_max_workers: int = 8   # Threads fetching from Kite API
+    bulk_ingest_db_workers: int = 2    # Threads writing to DB concurrently
+
     # Strategy
     signal_threshold: float = 0.65
     max_position_pct: float = 0.02

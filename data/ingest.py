@@ -9,7 +9,7 @@ Responsibilities:
 from __future__ import annotations
 
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from typing import Callable
 
 import pandas as pd
@@ -17,6 +17,8 @@ import structlog
 from kiteconnect import KiteConnect, KiteTicker
 
 from config.settings import settings
+from data.providers.base import OHLCVProvider
+from data.redis_keys import RedisKeys
 from data.store import get_redis, write_ohlcv, write_tick
 
 log = structlog.get_logger(__name__)
@@ -62,7 +64,7 @@ class KiteIngestor:
         if interval not in VALID_INTERVALS:
             raise ValueError(f"Invalid interval '{interval}'. Must be one of {VALID_INTERVALS}")
 
-        chunks = self._date_chunks(from_date, to_date, interval)
+        chunks = OHLCVProvider._date_chunks(from_date, to_date, interval, MINUTE_CHUNK_DAYS)
         frames: list[pd.DataFrame] = []
 
         for chunk_from, chunk_to in chunks:
@@ -99,27 +101,6 @@ class KiteIngestor:
         write_ohlcv(result.reset_index())
         log.info("historical_written", token=instrument_token, rows=len(result))
         return result
-
-    @staticmethod
-    def _date_chunks(
-        from_date: date | datetime,
-        to_date: date | datetime,
-        interval: str,
-    ) -> list[tuple[date | datetime, date | datetime]]:
-        """Split a date range into chunks respecting Kite API limits."""
-        if interval == "day":
-            return [(from_date, to_date)]
-
-        chunk_days = MINUTE_CHUNK_DAYS
-        chunks = []
-        current = from_date if isinstance(from_date, datetime) else datetime.combine(from_date, datetime.min.time())
-        end = to_date if isinstance(to_date, datetime) else datetime.combine(to_date, datetime.max.time())
-
-        while current < end:
-            chunk_end = min(current + timedelta(days=chunk_days), end)
-            chunks.append((current, chunk_end))
-            current = chunk_end + timedelta(seconds=1)
-        return chunks
 
     # ------------------------------------------------------------------
     # Live streaming
@@ -206,7 +187,7 @@ class KiteIngestor:
 
         # Persist to Redis so other processes can pick it up
         r = get_redis()
-        r.set("kite:access_token", access_token)
+        r.set(RedisKeys.KITE_ACCESS_TOKEN, access_token)
         return access_token
 
     @property

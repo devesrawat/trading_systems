@@ -221,6 +221,62 @@ def validate_ohlcv(df: pd.DataFrame) -> tuple[bool, list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Canonical preparation pipeline  (single source of truth)
+# ---------------------------------------------------------------------------
+
+def prepare_ohlcv(
+    df: pd.DataFrame,
+    interval: str = "day",
+    min_bars: int = 0,
+) -> pd.DataFrame | None:
+    """
+    Standard OHLCV preparation pipeline used across all strategies and ingestion.
+
+    Steps
+    -----
+    1. Validate OHLCV columns and basic sanity (high ≥ low, etc.)
+    2. Remove close and volume outliers (z-score, threshold=4)
+    3. For daily bars: forward-fill gaps ≤ 3, flag and drop circuit-limit days
+    4. Drop helper columns (``is_filled``, ``circuit_hit``)
+    5. Enforce *min_bars* floor — return None if too few bars remain
+
+    Parameters
+    ----------
+    df        : raw OHLCV DataFrame; may have a ``time`` column **or** a
+                ``DatetimeIndex`` named ``"time"``.
+    interval  : Kite/canonical interval string (``"day"``, ``"5minute"``, …).
+    min_bars  : return None if ``len(result) < min_bars``.  0 = no floor.
+
+    Returns
+    -------
+    Clean DataFrame with a ``DatetimeIndex`` named ``"time"``, or ``None``
+    when data quality is insufficient.
+    """
+    is_valid, _ = validate_ohlcv(df)
+    if not is_valid:
+        return None
+
+    if "time" in df.columns and df.index.name != "time":
+        df = df.set_index("time")
+
+    df = remove_outliers(df, col="close", method="zscore", threshold=4.0)
+    df = remove_outliers(df, col="volume", method="zscore", threshold=4.0)
+
+    if interval == "day":
+        df = fill_missing_bars(df, interval="day")
+        df = flag_circuit_limit_days(df)
+        df = df[~df["circuit_hit"]].drop(columns=["circuit_hit"])
+
+    if "is_filled" in df.columns:
+        df = df.drop(columns=["is_filled"])
+
+    if min_bars and len(df) < min_bars:
+        return None
+
+    return df
+
+
+# ---------------------------------------------------------------------------
 # NSE circuit limit flagging
 # ---------------------------------------------------------------------------
 

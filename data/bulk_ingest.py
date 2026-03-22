@@ -10,82 +10,30 @@ Design constraints:
 """
 from __future__ import annotations
 
-import time
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
-from threading import Semaphore
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
 import structlog
 
-from data.clean import (
-    fill_missing_bars,
-    flag_circuit_limit_days,
-    remove_outliers,
-    validate_ohlcv,
-)
+from config.settings import settings
+from data.clean import prepare_ohlcv
 from data.ingest import KiteIngestor
-from data.store import get_engine, get_ohlcv
-from sqlalchemy import text
+from data.rate_limiter import RateLimiter
+from data.store import _OHLCV_COLS, get_ohlcv, write_ohlcv_records
 
 log = structlog.get_logger(__name__)
 
-# Kite allows 3 historical requests per second per user
-_KITE_RPS = 3
-_BATCH_SIZE = 500        # rows to accumulate before a DB flush
-_MAX_WORKERS = 8         # threads fetching from Kite API
-_DB_WORKERS  = 2         # threads writing to DB concurrently with API fetches
-
-
-# ---------------------------------------------------------------------------
-# Token-bucket rate limiter
-# ---------------------------------------------------------------------------
-
-class _RateLimiter:
-    """Leaky-bucket: allows at most *rps* calls per second."""
-
-    def __init__(self, rps: int) -> None:
-        self._sem = Semaphore(rps)
-        self._rps = rps
-
-    def __enter__(self) -> "_RateLimiter":
-        self._sem.acquire()
-        return self
-
-    def __exit__(self, *_: Any) -> None:
-        # Release the slot after 1 second so the rate stays at rps
-        def _release(sem: Semaphore) -> None:
-            time.sleep(1.0 / self._rps)
-            sem.release()
-
-        from threading import Thread
-        Thread(target=_release, args=(self._sem,), daemon=True).start()
+_KITE_RPS    = settings.kite_rps
+_BATCH_SIZE  = settings.bulk_ingest_batch_size
+_MAX_WORKERS = settings.bulk_ingest_max_workers
+_DB_WORKERS  = settings.bulk_ingest_db_workers
 
 
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
-
-_UPSERT_SQL = text("""
-    INSERT INTO ohlcv (time, token, symbol, open, high, low, close, volume, interval)
-    VALUES (:time, :token, :symbol, :open, :high, :low, :close, :volume, :interval)
-    ON CONFLICT DO NOTHING
-""")
-
-_OHLCV_COLS = ["time", "token", "symbol", "open", "high", "low", "close", "volume", "interval"]
-
-
-def _flush(rows: list[dict]) -> int:
-    """Write a batch of OHLCV rows to TimescaleDB. Returns row count written."""
-    if not rows:
-        return 0
-    engine = get_engine()
-    with engine.connect() as conn:
-        conn.execute(_UPSERT_SQL, rows)
-        conn.commit()
-    return len(rows)
-
 
 def _latest_date_in_db(token: int, interval: str) -> date | None:
     """Return the most recent bar date for this token+interval, or None."""
@@ -104,7 +52,7 @@ def _latest_date_in_db(token: int, interval: str) -> date | None:
 
 def _fetch_one(
     ingestor: KiteIngestor,
-    limiter: _RateLimiter,
+    limiter: RateLimiter,
     instrument: dict,
     from_date: date,
     to_date: date,
@@ -151,29 +99,14 @@ def _fetch_one(
     df["symbol"]   = symbol
     df["interval"] = interval
 
-    # --- clean pipeline ---
-    ohlcv_cols = {"open", "high", "low", "close", "volume"}
-    if not ohlcv_cols.issubset(df.columns):
+    df = prepare_ohlcv(df, interval=interval)
+    if df is None:
+        log.warning("invalid_ohlcv_skipped", symbol=symbol)
         return symbol, 0, []
 
-    is_valid, issues = validate_ohlcv(df)
-    if not is_valid:
-        log.warning("invalid_ohlcv_skipped", symbol=symbol, issues=issues)
-        return symbol, 0, []
-
-    df = df.set_index("time")
-    df = remove_outliers(df, col="close", method="zscore", threshold=4.0)
-    df = remove_outliers(df, col="volume", method="zscore", threshold=4.0)
-
-    if interval == "day":
-        df = fill_missing_bars(df.reset_index().rename(columns={"index": "time"}).set_index("time"), interval="day")
-        df = flag_circuit_limit_days(df)
-        df = df[~df["circuit_hit"]].drop(columns=["circuit_hit"])
-
-    if "is_filled" in df.columns:
-        df = df.drop(columns=["is_filled"])
-
-    df = df.reset_index().rename(columns={"index": "time"})
+    df = df.reset_index()
+    if df.columns[0] != "time":
+        df = df.rename(columns={df.columns[0]: "time"})
 
     rows = df[_OHLCV_COLS].to_dict(orient="records")
     return symbol, len(rows), rows
@@ -208,7 +141,7 @@ def bulk_ingest(
     -------
     dict mapping symbol → rows written (0 = skipped or error)
     """
-    limiter      = _RateLimiter(_KITE_RPS)
+    limiter      = RateLimiter(_KITE_RPS)
     results: dict[str, int] = {}
     pending_rows: list[dict] = []
     total_written = 0
@@ -248,7 +181,7 @@ def bulk_ingest(
             if len(pending_rows) >= _BATCH_SIZE:
                 batch = pending_rows[:]
                 pending_rows.clear()
-                flush_futures.append(db_pool.submit(_flush, batch))
+                flush_futures.append(db_pool.submit(write_ohlcv_records, batch))
                 log.info(
                     "bulk_ingest_progress",
                     done=done,
@@ -258,7 +191,7 @@ def bulk_ingest(
 
         # Flush remainder (still non-blocking — wait below)
         if pending_rows:
-            flush_futures.append(db_pool.submit(_flush, pending_rows))
+            flush_futures.append(db_pool.submit(write_ohlcv_records, pending_rows[:]))
 
         # Wait for all DB writes and accumulate written counts
         for ff in flush_futures:

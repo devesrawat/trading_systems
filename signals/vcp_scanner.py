@@ -26,12 +26,7 @@ import pandas as pd
 import structlog
 from sqlalchemy import text
 
-from data.clean import (
-    fill_missing_bars,
-    flag_circuit_limit_days,
-    remove_outliers,
-    validate_ohlcv,
-)
+from data.clean import prepare_ohlcv
 from data.store import get_engine
 
 log = structlog.get_logger(__name__)
@@ -96,22 +91,8 @@ def fetch_ohlcv_bulk(
 # ---------------------------------------------------------------------------
 
 def _clean(df: pd.DataFrame) -> pd.DataFrame | None:
-    """Apply data/clean.py pipeline. Returns None if data is unusable."""
-    is_valid, _ = validate_ohlcv(df)
-    if not is_valid:
-        return None
-
-    df = df.set_index("time")
-    df = remove_outliers(df, col="close", method="zscore", threshold=4.0)
-    df = remove_outliers(df, col="volume", method="zscore", threshold=4.0)
-    df = fill_missing_bars(df, interval="day")
-    df = flag_circuit_limit_days(df)
-    df = df[~df["circuit_hit"]].drop(columns=["circuit_hit"])
-
-    if "is_filled" in df.columns:
-        df = df.drop(columns=["is_filled"])
-
-    return df if len(df) >= _MIN_BARS else None
+    """Apply the standard OHLCV preparation pipeline."""
+    return prepare_ohlcv(df, interval="day", min_bars=_MIN_BARS)
 
 
 def _trend_template(df: pd.DataFrame) -> bool:

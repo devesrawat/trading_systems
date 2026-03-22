@@ -19,26 +19,15 @@ from .base import OHLCVProvider
 
 log = structlog.get_logger(__name__)
 
-# Canonical interval → Kite interval (they match 1-to-1 in this case)
-_INTERVAL_MAP: dict[str, str] = {
-    "minute": "minute",
-    "3minute": "3minute",
-    "5minute": "5minute",
-    "15minute": "15minute",
-    "30minute": "30minute",
-    "60minute": "60minute",
-    "day": "day",
-}
-
 
 class KiteProvider(OHLCVProvider):
     """Zerodha Kite Connect data provider.
 
     Before fetching or streaming, register the symbol → instrument-token
-    mapping with :meth:`register_tokens`::
+    mapping with :meth:`register_instruments`::
 
         provider = KiteProvider(api_key="...", access_token="...")
-        provider.register_tokens({"RELIANCE": 738561, "INFY": 408065})
+        provider.register_instruments({"RELIANCE": 738561, "INFY": 408065})
         df = provider.fetch_historical("RELIANCE", from_date, to_date, "day")
     """
 
@@ -47,11 +36,11 @@ class KiteProvider(OHLCVProvider):
         self._symbol_to_token: dict[str, int] = {}
 
     # ------------------------------------------------------------------ #
-    # Token registry                                                       #
+    # Instrument registry                                                  #
     # ------------------------------------------------------------------ #
 
-    def register_tokens(self, mapping: dict[str, int]) -> None:
-        """Register *symbol → instrument token* pairs needed for API calls."""
+    def register_instruments(self, mapping: dict[str, int]) -> None:  # type: ignore[override]
+        """Register *symbol → Kite instrument token* pairs needed for API calls."""
         self._symbol_to_token.update(mapping)
 
     # ------------------------------------------------------------------ #
@@ -69,14 +58,13 @@ class KiteProvider(OHLCVProvider):
         if token is None:
             raise ValueError(
                 f"No instrument token registered for '{symbol}'. "
-                "Call register_tokens() first."
+                "Call register_instruments() first."
             )
-        kite_interval = _INTERVAL_MAP.get(interval, interval)
         return self._ingestor.fetch_historical(
             instrument_token=token,
             from_date=from_date,
             to_date=to_date,
-            interval=kite_interval,
+            interval=interval,
             symbol=symbol,
         )
 

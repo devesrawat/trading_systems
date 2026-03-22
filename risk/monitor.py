@@ -12,11 +12,12 @@ from typing import Any
 import structlog
 from prometheus_client import Gauge
 
+from data.redis_keys import RedisKeys
 from data.store import get_redis
 
 log = structlog.get_logger(__name__)
 
-_REDIS_KEY = "portfolio:state"
+_REDIS_KEY = RedisKeys.PORTFOLIO_STATE
 
 # Prometheus gauges (module-level singletons)
 _G_UNREALIZED = Gauge("trading_unrealized_pnl_inr", "Unrealized P&L in INR")
@@ -193,10 +194,10 @@ class PortfolioMonitor:
             "realized_pnl": self._realized_pnl,
             "positions": self._positions,
         }
-        get_redis().hset("portfolio:state", mapping={"data": json.dumps(state)})
+        get_redis().hset(_REDIS_KEY, mapping={"data": json.dumps(state)})
 
     def _load(self) -> None:
-        raw = get_redis().hgetall("portfolio:state")
+        raw = get_redis().hgetall(_REDIS_KEY)
         if not raw or "data" not in raw:
             return
         try:

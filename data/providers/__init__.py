@@ -22,6 +22,10 @@ def get_provider() -> OHLCVProvider:
     if name == "kite":
         from .kite import KiteProvider
 
+        if not settings.kite_api_key:
+            raise RuntimeError(
+                "KITE_API_KEY is required for the kite provider"
+            )
         return KiteProvider(
             api_key=settings.kite_api_key,
             access_token=settings.kite_access_token,
@@ -30,9 +34,9 @@ def get_provider() -> OHLCVProvider:
     if name == "upstox":
         from .upstox import UpstoxProvider
 
-        if not settings.upstox_api_key or not settings.upstox_access_token:
+        if not settings.upstox_api_key:
             raise RuntimeError(
-                "UPSTOX_API_KEY and UPSTOX_ACCESS_TOKEN are required for the upstox provider"
+                "UPSTOX_API_KEY is required for the upstox provider"
             )
         return UpstoxProvider(
             api_key=settings.upstox_api_key,

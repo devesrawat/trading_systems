@@ -19,8 +19,8 @@ Each provider translates these into its own API-specific names internally.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from datetime import date, datetime
-from typing import Callable
+from datetime import date, datetime, timedelta
+from typing import Any, Callable
 
 import pandas as pd
 
@@ -32,6 +32,22 @@ CANONICAL_INTERVALS = frozenset(
 
 class OHLCVProvider(ABC):
     """Abstract interface for fetching and streaming OHLCV market data."""
+
+    # ------------------------------------------------------------------ #
+    # Instrument registry                                                  #
+    # ------------------------------------------------------------------ #
+
+    @abstractmethod
+    def register_instruments(self, mapping: dict[str, Any]) -> None:
+        """Register symbol → provider-specific instrument identifier pairs.
+
+        The value type differs by provider:
+        - :class:`KiteProvider`: ``dict[str, int]``  (Kite instrument tokens)
+        - :class:`UpstoxProvider`: ``dict[str, str]`` (Upstox instrument keys)
+
+        Must be called before :meth:`fetch_historical`, :meth:`stream_live`,
+        or :meth:`get_quote`.
+        """
 
     # ------------------------------------------------------------------ #
     # Historical data                                                      #
@@ -114,3 +130,40 @@ class OHLCVProvider(ABC):
     def refresh_access_token(self, request_token: str) -> str:
         """Exchange a request token for an access token (if applicable)."""
         raise NotImplementedError(f"{type(self).__name__} does not support token refresh")
+
+    # ------------------------------------------------------------------ #
+    # Shared utilities                                                     #
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _date_chunks(
+        from_date: date | datetime,
+        to_date: date | datetime,
+        interval: str,
+        chunk_days: int = 60,
+    ) -> list[tuple[date | datetime, date | datetime]]:
+        """Split *from_date*–*to_date* into chunks of at most *chunk_days*.
+
+        Daily intervals are returned as a single chunk.  Intraday intervals
+        are split so that each chunk stays within the broker's per-request
+        limit (e.g. 60 days for Kite, 100 days for Upstox).
+        """
+        if interval == "day":
+            return [(from_date, to_date)]
+
+        current = (
+            from_date
+            if isinstance(from_date, datetime)
+            else datetime.combine(from_date, datetime.min.time())
+        )
+        end = (
+            to_date
+            if isinstance(to_date, datetime)
+            else datetime.combine(to_date, datetime.max.time())
+        )
+        chunks: list[tuple[date | datetime, date | datetime]] = []
+        while current < end:
+            chunk_end = min(current + timedelta(days=chunk_days), end)
+            chunks.append((current, chunk_end))
+            current = chunk_end + timedelta(seconds=1)
+        return chunks
