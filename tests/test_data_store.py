@@ -6,7 +6,14 @@ from unittest.mock import MagicMock, patch
 import pandas as pd
 import pytest
 
-from data.store import _df_to_records, get_latest_tick, get_universe, write_tick
+from data.store import (
+    _df_to_records,
+    get_latest_crypto_tick,
+    get_latest_tick,
+    get_universe,
+    write_crypto_tick,
+    write_tick,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -119,3 +126,63 @@ class TestGetUniverse:
 
         result = get_universe()
         assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Crypto tick cache
+# ---------------------------------------------------------------------------
+
+class TestCryptoTickCache:
+    @patch("data.store.get_redis")
+    def test_write_crypto_tick_sets_key_with_ttl(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+
+        write_crypto_tick("BTCUSDT", {"last_price": 42000.0, "quantity": 0.5})
+
+        mock_redis.setex.assert_called_once()
+        key, ttl, payload = mock_redis.setex.call_args[0]
+        assert key == "trading:crypto:tick:BTCUSDT"
+        assert ttl == 10
+        assert "last_price" in payload
+
+    @patch("data.store.get_redis")
+    def test_write_crypto_tick_uppercases_symbol(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+
+        write_crypto_tick("btcusdt", {"last_price": 42000.0})
+
+        key = mock_redis.setex.call_args[0][0]
+        assert key == "trading:crypto:tick:BTCUSDT"
+
+    @patch("data.store.get_redis")
+    def test_get_latest_crypto_tick_returns_dict(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = json.dumps({"last_price": 42000.0, "symbol": "BTCUSDT"})
+        mock_get_redis.return_value = mock_redis
+
+        result = get_latest_crypto_tick("BTCUSDT")
+        assert result == {"last_price": 42000.0, "symbol": "BTCUSDT"}
+
+    @patch("data.store.get_redis")
+    def test_get_latest_crypto_tick_returns_none_on_miss(self, mock_get_redis):
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+        mock_get_redis.return_value = mock_redis
+
+        assert get_latest_crypto_tick("ETHUSDT") is None
+
+    @patch("data.store.get_redis")
+    def test_crypto_tick_key_distinct_from_nse_tick_key(self, mock_get_redis):
+        """Crypto and NSE ticks must live in separate Redis namespaces."""
+        mock_redis = MagicMock()
+        mock_get_redis.return_value = mock_redis
+
+        write_tick(256265, {"last_price": 2500.0})
+        write_crypto_tick("BTCUSDT", {"last_price": 42000.0})
+
+        keys_used = [call[0][0] for call in mock_redis.setex.call_args_list]
+        assert keys_used[0].startswith("trading:tick:")
+        assert keys_used[1].startswith("trading:crypto:tick:")
+        assert keys_used[0] != keys_used[1]

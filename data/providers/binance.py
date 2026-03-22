@@ -117,6 +117,10 @@ class BinanceProvider(OHLCVProvider):
 
         # friendly_name → Binance pair (e.g. "BTC" → "BTCUSDT")
         self._name_to_pair: dict[str, str] = {}
+        # Binance pair → friendly name for reverse lookup in get_quote
+        # ("BTCUSDT" → "BTC").  Maintained separately so the auto-alias
+        # "BTCUSDT" → "BTCUSDT" does not overwrite the friendly mapping.
+        self._pair_to_friendly: dict[str, str] = {}
 
         self._ws_app = None
         self._ws_thread: threading.Thread | None = None
@@ -142,9 +146,12 @@ class BinanceProvider(OHLCVProvider):
         """
         for name, pair in mapping.items():
             pair_upper = pair.upper()
-            self._name_to_pair[name.upper()] = pair_upper
+            name_upper = name.upper()
+            self._name_to_pair[name_upper] = pair_upper
             # Also register the pair itself so callers can pass either form
             self._name_to_pair[pair_upper] = pair_upper
+            # Reverse map: prefer the friendly name; fall back to the pair itself
+            self._pair_to_friendly.setdefault(pair_upper, name_upper)
 
     def _resolve_pair(self, symbol: str) -> str:
         """Translate *symbol* to a Binance trading pair, raising if unknown."""
@@ -318,11 +325,10 @@ class BinanceProvider(OHLCVProvider):
         pair_json = json.dumps(pairs)
         raw: list[dict] = self._get("/ticker/price", {"symbols": pair_json})
 
-        pair_to_name = {v: k for k, v in self._name_to_pair.items()}
         result: dict[str, dict] = {}
         for item in raw:
             pair = item["symbol"]
-            name = pair_to_name.get(pair, pair)
+            name = self._pair_to_friendly.get(pair, pair)
             result[name] = {
                 "symbol":     name,
                 "pair":       pair,
