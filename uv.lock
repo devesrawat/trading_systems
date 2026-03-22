@@ -2947,6 +2947,9 @@ dev = [
     { name = "pytest-cov" },
     { name = "pytest-mock" },
 ]
+upstox = [
+    { name = "requests" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -2973,6 +2976,7 @@ requires-dist = [
     { name = "python-telegram-bot", specifier = ">=21.1" },
     { name = "pyyaml", specifier = ">=6.0.1" },
     { name = "redis", specifier = ">=5.0.3" },
+    { name = "requests", marker = "extra == 'upstox'", specifier = ">=2.31.0" },
     { name = "scikit-learn", specifier = ">=1.4.1" },
     { name = "scipy", specifier = ">=1.12.0" },
     { name = "sentence-transformers", specifier = ">=2.5.1" },
@@ -2984,7 +2988,7 @@ requires-dist = [
     { name = "vectorbt", specifier = ">=0.26.2" },
     { name = "xgboost", specifier = ">=2.0.3" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "upstox"]
 
 [[package]]
 name = "traitlets"

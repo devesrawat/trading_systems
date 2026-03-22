@@ -37,7 +37,7 @@ Live NSE market data → feature engineering + FinBERT sentiment → XGBoost sig
 
 ### Data Flow
 
-```
+```text
 Zerodha Kite WebSocket (live ticks)
         │
         ▼
@@ -60,7 +60,7 @@ Kite order placement → MLflow log → Telegram alert
 ### Market Split
 
 | Segment | Signal Type | Model | Label |
-|---------|------------|-------|-------|
+| --------- | ------------ | ------- | ------- |
 | NSE Equities (NSE500) | Momentum + sentiment | XGBoost classifier | +2% in 5 days |
 | NSE F&O (weekly expiry) | IV rank + delta-neutral | Separate XGBoost | IV reversion within 3 days |
 
@@ -77,7 +77,7 @@ Kite order placement → MLflow log → Telegram alert
 
 ## 2. Project Structure
 
-```
+```text
 nse_trading_system/
 │
 ├── data/
@@ -242,7 +242,7 @@ volumes:
 
 ### `requirements.txt`
 
-```
+```text
 # Core
 pandas==2.2.0
 numpy==1.26.4
@@ -328,7 +328,7 @@ cp .env.example .env
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build data/ingest.py with:
 - KiteIngestor class with methods:
   - fetch_historical(instrument_token, from_date, to_date, interval) → DataFrame
@@ -368,7 +368,7 @@ CREATE INDEX ON ohlcv (token, time DESC);
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build data/store.py with:
 - get_ohlcv(token, from_date, to_date, interval) → pd.DataFrame
 - write_ohlcv(df: pd.DataFrame) → None (bulk upsert, conflict on time+token+interval)
@@ -384,7 +384,7 @@ Build data/store.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build data/clean.py with:
 - remove_outliers(df, col='close', method='zscore', threshold=4.0) → df
 - adjust_splits(df, token) → df (fetch corporate action from Kite and back-adjust close/volume)
@@ -400,7 +400,7 @@ Build data/clean.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build data/universe.py with:
 - load_nse500_tokens() → list[dict] — reads config/instruments.json
 - refresh_instruments(kite) → writes updated instruments.json from Kite instrument dump
@@ -419,7 +419,7 @@ Build data/universe.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build signals/features.py with a single function:
 build_features(df: pd.DataFrame) → pd.DataFrame
 
@@ -481,7 +481,7 @@ Important:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build signals/regime.py with:
 - VolRegimeDetector class using hmmlearn GaussianHMM with 2 states
   - fit(returns_series) → trains 2-state HMM on log returns
@@ -503,7 +503,7 @@ Build signals/regime.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build llm/sentiment.py with:
 - FinBERTScorer class:
   - __init__: load ProsusAI/finbert from HuggingFace (cache locally in .models/)
@@ -524,7 +524,7 @@ Build llm/sentiment.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build llm/sources.py with:
 - FinnhubFetcher class:
   - fetch_news(symbol: str, from_ts: int, to_ts: int) → list[dict]
@@ -551,7 +551,7 @@ Build llm/sources.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build llm/pipeline.py with:
 - SentimentPipeline class:
   - run_daily(universe: list[str]) → dict[symbol, float]
@@ -582,7 +582,7 @@ SELECT create_hypertable('sentiment_scores', 'time');
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build signals/model.py with:
 - SignalModel class:
   - __init__(model_path: str): load XGBoost model from mlflow or local path
@@ -605,7 +605,7 @@ Build signals/model.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build signals/train.py with:
 - WalkForwardTrainer class:
   - __init__(train_months=24, test_months=3, purge_days=5)
@@ -641,7 +641,7 @@ XGBoost hyperparams to tune (use Optuna):
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build risk/breakers.py with:
 - CircuitBreaker class:
   - __init__(daily_limit=0.03, weekly_limit=0.07, max_consecutive_losses=5)
@@ -665,7 +665,7 @@ Build risk/breakers.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build risk/sizer.py with:
 - PositionSizer class:
   - __init__(total_capital: float, max_position_pct=0.02)
@@ -693,7 +693,7 @@ Build risk/sizer.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build risk/monitor.py with:
 - PortfolioMonitor class:
   - update_position(symbol, qty, avg_price, current_price) → None
@@ -715,7 +715,7 @@ Build risk/monitor.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build execution/orders.py with:
 - OrderExecutor class:
   - __init__(kite, paper_mode=True)  # ALWAYS default to paper mode
@@ -760,7 +760,7 @@ CREATE TABLE paper_trades (
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build execution/logger.py with:
 - TradeLogger class:
   - log_signal(symbol, features_dict, signal_prob, action_taken) → run_id
@@ -789,7 +789,7 @@ Build execution/logger.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build backtest/walk_forward.py with:
 - WalkForwardBacktest class:
   - __init__(train_months=24, test_months=3, purge_days=5)
@@ -821,7 +821,7 @@ Build backtest/walk_forward.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build backtest/costs.py with:
 - NSECostModel class:
   - equity_cost(trade_value: float, side: str, intraday=False) → float
@@ -854,7 +854,7 @@ Build backtest/costs.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build backtest/metrics.py with standalone functions:
 - sharpe_ratio(returns: pd.Series, risk_free=0.065) → float
   - annualized, using 252 trading days
@@ -890,7 +890,7 @@ Build backtest/metrics.py with standalone functions:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build orchestrator/main.py with:
 - TradingSystem class:
   - __init__: initialize all modules (data, signals, llm, risk, execution)
@@ -933,7 +933,7 @@ Build orchestrator/main.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build orchestrator/scheduler.py with APScheduler:
 - Jobs:
   - 08:45 IST daily → pre_market_setup()
@@ -953,7 +953,7 @@ Build orchestrator/scheduler.py with APScheduler:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build monitoring/alerts.py with:
 - TelegramAlerter class:
   - send(message: str) → None (async, with retry)
@@ -974,7 +974,7 @@ Message format example:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build monitoring/mlflow_tracker.py with:
 - Experiment names: "nse_equity_signals", "nse_options_signals", "backtest_results"
 - ModelRegistry: register trained models with stage Staging → Production workflow
@@ -994,7 +994,7 @@ Build monitoring/mlflow_tracker.py with:
 
 **Build instructions for Claude Code:**
 
-```
+```text
 Build options/iv_features.py with:
 - build_fo_features(symbol, expiry_date, kite) → pd.DataFrame
   Features:
@@ -1029,7 +1029,7 @@ Signal logic (implement in options/strategy.py):
 ### Stress Test Windows (Always Include)
 
 | Event | Date Range |
-|-------|-----------|
+| ------- | ----------- |
 | COVID crash | Mar 2020 – May 2020 |
 | Recovery rally | Jun 2020 – Dec 2020 |
 | FTX/crypto contagion | Nov 2022 |
@@ -1040,7 +1040,7 @@ Signal logic (implement in options/strategy.py):
 ### Minimum Thresholds to Pass Before Live Deployment
 
 | Metric | Minimum | Good | Exceptional |
-|--------|---------|------|-------------|
+| -------- | --------- | ------ | ------------- |
 | Sharpe Ratio | 1.0 | 1.5 | 2.0+ |
 | Max Drawdown | ≤25% | ≤15% | ≤10% |
 | Profit Factor | 1.5 | 2.0 | 4.0+ |
@@ -1056,7 +1056,7 @@ Signal logic (implement in options/strategy.py):
 
 Run through this checklist before switching `PAPER_TRADE_MODE=false`.
 
-```
+```text
 PRE-LIVE CHECKLIST
 
 Data pipeline
@@ -1107,7 +1107,7 @@ SEBI compliance
 ## 16. 16-Week Build Roadmap
 
 | Week | Focus | Deliverable |
-|------|-------|-------------|
+| ------ | ------- | ------------- |
 | 1 | Environment + DB | Docker up, TimescaleDB schema, instruments.json |
 | 2 | data/ingest.py | Historical OHLCV for NSE500, 2 years loaded |
 | 3 | data/clean.py | Outlier removal, corporate action adjustments verified |
@@ -1139,7 +1139,7 @@ SEBI compliance
 ### Scaling Rules (₹5L–₹25L)
 
 | Live Trade Count | Max Capital Deployed |
-|-----------------|---------------------|
+| ----------------- | --------------------- |
 | 0–60 trades | ₹50,000 |
 | 60–120 trades | ₹2,00,000 |
 | 120–200 trades | ₹5,00,000 |
@@ -1159,7 +1159,7 @@ SEBI compliance
 
 ### NSE Market Hours
 
-```
+```text
 Pre-open session:    09:00–09:08 IST
 Pre-open matching:   09:08–09:15 IST
 Normal market:       09:15–15:30 IST
@@ -1194,7 +1194,7 @@ F&O expiry:          Thursday (weekly), last Thursday of month (monthly)
 
 Use these to continue work efficiently in new Claude Code sessions:
 
-```
+```text
 # Start a new module
 "Read NSE_TRADING_SYSTEM.md and build [module name] exactly as specified
 in the Build instructions section. Use the tech stack defined in

@@ -10,10 +10,19 @@ class Settings(BaseSettings):
         case_sensitive=False,
     )
 
+    # Data provider selection: "kite" (default) | "upstox"
+    data_provider: str = "kite"
+
     # Zerodha Kite
-    kite_api_key: str
-    kite_api_secret: str
+    kite_api_key: str = ""
+    kite_api_secret: str = ""
     kite_access_token: Optional[str] = None
+
+    # Upstox v2
+    upstox_api_key: Optional[str] = None
+    upstox_api_secret: Optional[str] = None
+    upstox_access_token: Optional[str] = None
+    upstox_redirect_uri: str = "http://localhost:8080"
 
     # Database
     timescale_url: str = "postgresql://trader:password@localhost:5432/nse_trading"

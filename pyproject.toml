@@ -58,6 +58,14 @@ dev = [
     "pytest-cov>=5.0.0",
     "pytest-mock>=3.14.0",
 ]
+upstox = [
+    # requests is already a transitive dep via kiteconnect; listed explicitly
+    # so uv knows it's required for the upstox extra.
+    # websocket-client is also already present via kiteconnect.
+    # For live-streaming protobuf decoding, install the SDK from GitHub:
+    #   pip install git+https://github.com/upstox/upstox-python.git
+    "requests>=2.31.0",
+]
 
 [build-system]
 requires = ["hatchling"]
