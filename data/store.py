@@ -166,6 +166,28 @@ def write_tick(token: int, tick: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Crypto tick cache  (separate namespace from NSE integer tokens)
+# ---------------------------------------------------------------------------
+
+_CRYPTO_TICK_TTL_SECONDS = 10   # crypto markets are 24/7; slightly longer TTL than NSE
+
+
+def get_latest_crypto_tick(symbol: str) -> dict[str, Any] | None:
+    """Return the most recent crypto tick for *symbol* from Redis, or None."""
+    r = get_redis()
+    raw = r.get(RedisKeys.crypto_tick(symbol))
+    if raw is None:
+        return None
+    return json.loads(raw)
+
+
+def write_crypto_tick(symbol: str, tick: dict[str, Any]) -> None:
+    """Cache a live crypto tick in Redis with a short TTL."""
+    r = get_redis()
+    r.setex(RedisKeys.crypto_tick(symbol), _CRYPTO_TICK_TTL_SECONDS, json.dumps(tick))
+
+
+# ---------------------------------------------------------------------------
 # Universe helpers
 # ---------------------------------------------------------------------------
 

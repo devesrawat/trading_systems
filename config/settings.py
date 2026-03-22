@@ -28,9 +28,22 @@ class Settings(BaseSettings):
     timescale_url: str = "postgresql://trader:password@localhost:5432/nse_trading"
     redis_url: str = "redis://localhost:6379/0"
 
-    # News APIs
+    # News APIs — equities
     finnhub_api_key: Optional[str] = None
     newsapi_key: Optional[str] = None
+
+    # Crypto data providers (all free-tier)
+    binance_api_key: Optional[str] = None     # optional — only needed for order placement
+    binance_api_secret: Optional[str] = None  # optional — public market data needs no key
+    coingecko_api_key: Optional[str] = None   # optional free key → 50 req/min (vs 30 anon)
+    cryptopanic_api_key: Optional[str] = None # free key at cryptopanic.com/developers/api/
+
+    # Crypto universe & strategy
+    crypto_enabled: bool = False
+    crypto_universe_size: int = 30            # top-N coins by market cap to scan
+    crypto_min_volume_usd: float = 5_000_000  # 24 h volume floor (USD)
+    crypto_signal_threshold: float = 0.65    # same default as equities
+    crypto_max_position_pct: float = 0.01    # tighter cap — crypto is more volatile
 
     # Monitoring
     telegram_bot_token: Optional[str] = None

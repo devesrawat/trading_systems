@@ -57,3 +57,27 @@ class RedisKeys:
     # ------------------------------------------------------------------
 
     KITE_ACCESS_TOKEN: str = "trading:auth:kite:access_token"
+
+    # ------------------------------------------------------------------
+    # Crypto — tick cache  (TTL: 10 s — data/store.py)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def crypto_tick(symbol: str) -> str:
+        """``trading:crypto:tick:{symbol}``  e.g. ``trading:crypto:tick:BTCUSDT``"""
+        return f"trading:crypto:tick:{symbol.upper()}"
+
+    # ------------------------------------------------------------------
+    # Crypto — sentiment  (TTL: 1 h — llm/sentiment.py)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def crypto_sentiment(symbol: str, date: str) -> str:
+        """``trading:crypto:sentiment:{symbol}:{date}``"""
+        return f"trading:crypto:sentiment:{symbol.upper()}:{date}"
+
+    # ------------------------------------------------------------------
+    # Crypto — universe cache  (TTL: 1 h — data/universe_crypto.py)
+    # ------------------------------------------------------------------
+
+    CRYPTO_UNIVERSE: str = "trading:crypto:universe"
