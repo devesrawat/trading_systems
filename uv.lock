@@ -2941,14 +2941,16 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+upstox = [
+    { name = "requests" },
+]
+
+[package.dev-dependencies]
 dev = [
     { name = "pytest" },
     { name = "pytest-asyncio" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
-]
-upstox = [
-    { name = "requests" },
 ]
 
 [package.metadata]
@@ -2968,10 +2970,6 @@ requires-dist = [
     { name = "prometheus-client", specifier = ">=0.20.0" },
     { name = "psycopg2-binary", specifier = ">=2.9.9" },
     { name = "pydantic-settings", specifier = ">=2.2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.1.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.5" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5.0.0" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.14.0" },
     { name = "python-dotenv", specifier = ">=1.0.0" },
     { name = "python-telegram-bot", specifier = ">=21.1" },
     { name = "pyyaml", specifier = ">=6.0.1" },
@@ -2988,7 +2986,15 @@ requires-dist = [
     { name = "vectorbt", specifier = ">=0.26.2" },
     { name = "xgboost", specifier = ">=2.0.3" },
 ]
-provides-extras = ["dev", "upstox"]
+provides-extras = ["upstox"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.1.0" },
+    { name = "pytest-asyncio", specifier = ">=0.23.5" },
+    { name = "pytest-cov", specifier = ">=5.0.0" },
+    { name = "pytest-mock", specifier = ">=3.14.0" },
+]
 
 [[package]]
 name = "traitlets"

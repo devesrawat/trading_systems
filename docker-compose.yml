@@ -1,51 +1,175 @@
 version: "3.8"
+
+# ---------------------------------------------------------------------------
+# Local dev compose — all services on one machine, ports exposed to host.
+# Usage:
+#   cp .env.example .env          # fill in your API keys
+#   docker compose up -d          # start everything
+#   docker compose logs -f        # tail logs
+#   docker compose down -v        # tear down (removes volumes)
+# ---------------------------------------------------------------------------
+
 services:
+  # --------------------------------------------------------------------------
+  # Infrastructure
+  # --------------------------------------------------------------------------
   timescaledb:
     image: timescale/timescaledb:latest-pg15
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: trader
-      POSTGRES_PASSWORD: password
-      POSTGRES_DB: nse_trading
+      POSTGRES_USER:     ${POSTGRES_USER:-trader}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+      POSTGRES_DB:       ${POSTGRES_DB:-nse_trading}
     ports:
       - "5432:5432"
     volumes:
       - timescale_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U trader -d nse_trading"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-trader} -d ${POSTGRES_DB:-nse_trading}"]
       interval: 10s
       timeout: 5s
       retries: 5
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "6379:6379"
+    volumes:
+      - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5
 
+  # --------------------------------------------------------------------------
+  # Observability
+  # --------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:latest
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    depends_on:
+      - orchestrator
+
   grafana:
     image: grafana/grafana:latest
+    restart: unless-stopped
     ports:
       - "3000:3000"
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning
     depends_on:
       - timescaledb
+      - prometheus
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:latest
+    restart: unless-stopped
     ports:
       - "5001:5000"
-    command: mlflow server --host 0.0.0.0 --backend-store-uri sqlite:///mlflow.db --default-artifact-root /mlflow/artifacts
+    command: >
+      mlflow server
+        --host 0.0.0.0
+        --backend-store-uri sqlite:///mlflow.db
+        --default-artifact-root /mlflow/artifacts
     volumes:
       - mlflow_data:/mlflow
 
+  # --------------------------------------------------------------------------
+  # Migrations — runs once, exits, then app services start
+  # --------------------------------------------------------------------------
+  migrate:
+    build: .
+    command: python -m alembic upgrade head
+    env_file: .env
+    environment:
+      TIMESCALE_URL: postgresql://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-password}@timescaledb:5432/${POSTGRES_DB:-nse_trading}
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+    restart: "no"
+
+  # --------------------------------------------------------------------------
+  # Trading application services
+  # --------------------------------------------------------------------------
+  orchestrator:
+    build: .
+    command: python -m orchestrator.main
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TIMESCALE_URL: postgresql://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-password}@timescaledb:5432/${POSTGRES_DB:-nse_trading}
+      REDIS_URL: redis://redis:6379/0
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    ports:
+      - "8000:8000"   # Prometheus metrics endpoint (monitoring/grafana_exporter.py)
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  scanner:
+    build: .
+    command: python -m signals.scanner_engine
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TIMESCALE_URL: postgresql://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-password}@timescaledb:5432/${POSTGRES_DB:-nse_trading}
+      REDIS_URL: redis://redis:6379/0
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
+  live-feed:
+    build: .
+    command: python -m data.live_feed
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
+
 volumes:
   timescale_data:
+  redis_data:
+  prometheus_data:
   grafana_data:
   mlflow_data:
