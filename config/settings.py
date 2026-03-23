@@ -56,6 +56,12 @@ class Settings(BaseSettings):
     bulk_ingest_max_workers: int = 8   # Threads fetching from Kite API
     bulk_ingest_db_workers: int = 2    # Threads writing to DB concurrently
 
+    # Market mode: "equity" | "crypto" | "both"
+    market_type: str = "equity"
+
+    # Capital
+    initial_capital: float = 500_000.0
+
     # Strategy
     signal_threshold: float = 0.65
     max_position_pct: float = 0.02

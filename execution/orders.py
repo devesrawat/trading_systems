@@ -14,9 +14,9 @@ import structlog
 from sqlalchemy import text
 
 from data.store import get_engine
+from execution.broker import BrokerAdapter
 
 if TYPE_CHECKING:
-    from kiteconnect import KiteConnect
     from risk.breakers import CircuitBreaker
 
 log = structlog.get_logger(__name__)
@@ -42,23 +42,27 @@ _PAPER_ORDER_PREFIX = "PAPER"
 
 class OrderExecutor:
     """
-    Places, cancels, and tracks orders via Zerodha Kite Connect.
+    Places, cancels, and tracks orders via the configured :class:`BrokerAdapter`.
 
-    paper_mode=True (default): logs trades to paper_trades table, never calls Kite.
-    paper_mode=False          : live orders — only after go-live checklist is cleared.
+    Works with Kite, Upstox, Binance, or any future broker — the adapter
+    abstracts all broker-specific API calls.  In paper mode the adapter's
+    :attr:`~BrokerAdapter.is_paper` flag is True and no real orders are sent.
     """
 
     def __init__(
         self,
-        kite: "KiteConnect",
+        broker: BrokerAdapter,
         circuit_breaker: "CircuitBreaker",
-        paper_mode: bool = True,
     ) -> None:
-        self._kite = kite
+        self._broker = broker
         self._cb = circuit_breaker
-        self.paper_mode = paper_mode
-        if not paper_mode:
-            log.warning("live_trading_mode_active")
+        if not broker.is_paper:
+            log.warning("live_trading_mode_active", adapter=type(broker).__name__)
+
+    @property
+    def paper_mode(self) -> bool:
+        """True when the underlying broker adapter is in paper mode."""
+        return self._broker.is_paper
 
     # ------------------------------------------------------------------
     # place_market_order
@@ -80,8 +84,6 @@ class OrderExecutor:
         self._validate_order(transaction_type, quantity)
         self._check_circuit_breaker()
 
-        product = "MIS" if intraday else "CNC"
-
         log.info(
             "placing_market_order",
             symbol=symbol,
@@ -90,22 +92,19 @@ class OrderExecutor:
             paper=self.paper_mode,
         )
 
-        if self.paper_mode:
+        if self._broker.is_paper:
             order_id = f"{_PAPER_ORDER_PREFIX}_{uuid.uuid4().hex[:8].upper()}"
             _write_paper_trade(symbol, transaction_type, quantity, price=0.0, tag=tag)
             return order_id
 
-        order_id = self._kite.place_order(
-            variety=self._kite.VARIETY_REGULAR,
-            exchange=self._kite.EXCHANGE_NSE,
-            tradingsymbol=symbol,
-            transaction_type=transaction_type,
+        order_id = self._broker.place_order(
+            symbol=symbol,
+            side=transaction_type,
             quantity=quantity,
-            order_type=self._kite.ORDER_TYPE_MARKET,
-            product=product,
             tag=tag,
+            order_type="MARKET",
+            intraday=intraday,
         )
-        order_id = str(order_id)
         write_live_trade(symbol, transaction_type, quantity, price=0.0, order_id=order_id, tag=tag)
         log.info("market_order_placed", order_id=order_id, symbol=symbol)
         return order_id
@@ -131,8 +130,6 @@ class OrderExecutor:
             raise ValueError(f"price must be positive, got {price}")
         self._check_circuit_breaker()
 
-        product = "MIS" if intraday else "CNC"
-
         log.info(
             "placing_limit_order",
             symbol=symbol,
@@ -142,23 +139,20 @@ class OrderExecutor:
             paper=self.paper_mode,
         )
 
-        if self.paper_mode:
+        if self._broker.is_paper:
             order_id = f"{_PAPER_ORDER_PREFIX}_{uuid.uuid4().hex[:8].upper()}"
             _write_paper_trade(symbol, transaction_type, quantity, price=price, tag=tag)
             return order_id
 
-        order_id = self._kite.place_order(
-            variety=self._kite.VARIETY_REGULAR,
-            exchange=self._kite.EXCHANGE_NSE,
-            tradingsymbol=symbol,
-            transaction_type=transaction_type,
+        order_id = self._broker.place_order(
+            symbol=symbol,
+            side=transaction_type,
             quantity=quantity,
-            order_type=self._kite.ORDER_TYPE_LIMIT,
-            price=price,
-            product=product,
             tag=tag,
+            price=price,
+            order_type="LIMIT",
+            intraday=intraday,
         )
-        order_id = str(order_id)
         write_live_trade(symbol, transaction_type, quantity, price=price, order_id=order_id, tag=tag)
         log.info("limit_order_placed", order_id=order_id, symbol=symbol, price=price)
         return order_id
@@ -169,19 +163,7 @@ class OrderExecutor:
 
     def cancel_order(self, order_id: str) -> bool:
         """Cancel an open order. Returns True on success, False on error."""
-        if self.paper_mode or order_id.startswith(_PAPER_ORDER_PREFIX):
-            log.info("paper_order_cancelled", order_id=order_id)
-            return True
-        try:
-            self._kite.cancel_order(
-                variety=self._kite.VARIETY_REGULAR,
-                order_id=order_id,
-            )
-            log.info("order_cancelled", order_id=order_id)
-            return True
-        except Exception as exc:
-            log.error("order_cancel_failed", order_id=order_id, error=str(exc))
-            return False
+        return self._broker.cancel_order(order_id)
 
     # ------------------------------------------------------------------
     # get_order_status
@@ -189,14 +171,7 @@ class OrderExecutor:
 
     def get_order_status(self, order_id: str) -> dict[str, Any]:
         """Return the current status dict for *order_id*."""
-        if self.paper_mode or order_id.startswith(_PAPER_ORDER_PREFIX):
-            return {"order_id": order_id, "status": "PAPER_COMPLETE"}
-        try:
-            history = self._kite.order_history(order_id=order_id)
-            return history[-1] if history else {"order_id": order_id, "status": "UNKNOWN"}
-        except Exception as exc:
-            log.error("order_status_failed", order_id=order_id, error=str(exc))
-            return {"order_id": order_id, "status": "ERROR", "error": str(exc)}
+        return self._broker.get_order_status(order_id)
 
     # ------------------------------------------------------------------
     # slippage_estimate
