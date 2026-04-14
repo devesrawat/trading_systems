@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # Default is the NSE:NIFTY 50 token on Zerodha Kite
     nifty50_token: int = 256265
 
+    # A/B test routing — fraction of signals routed to challenger (Staging) model
+    ab_test_pct: float = 0.0   # 0 = disabled; 0.2 = 20% to challenger
+
     # Feature flags
     earnings_filter_enabled: bool = False
 

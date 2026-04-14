@@ -120,7 +120,12 @@ class TradingSystem:
         # ------------------------------------------------------------------
         self._registry = ModelRegistry(tracking_uri=settings.mlflow_tracking_uri)
         self._model: SignalModel | None = None
+        self._challenger_model: SignalModel | None = None
         self._crypto_model: SignalModel | None = None
+
+        # A/B routing — challenger model loaded lazily on first use
+        from orchestrator.ab_router import SignalRouter
+        self._ab_router = SignalRouter(challenger_pct=settings.ab_test_pct)
 
         # Sentiment — equity only (crypto uses sources_crypto separately)
         self._sentiment = None
@@ -301,9 +306,94 @@ class TradingSystem:
             score = ModelDriftMonitor().compare_live_vs_backtest(window_trades=20)
             if score > 0.3:
                 log.warning("model_drift_detected", drift_score=score)
-                self._send_alert(f"Model drift detected — score={score:.3f}. Retrain recommended.")
+                self._send_alert(f"⚠️ Model drift detected — score={score:.3f}. Starting retrain…")
+                self._auto_retrain_and_promote()
         except Exception as exc:
             log.error("retrain_check_failed", error=str(exc))
+
+    def _auto_retrain_and_promote(self) -> None:
+        """
+        Run walk-forward retraining and auto-promote to Production if AUC ≥ 0.60.
+
+        Intentionally conservative threshold: only promotes a genuinely better model.
+        Runs synchronously — expected to complete within a few minutes on Sunday
+        overnight when no trading is active.
+        """
+        try:
+            import pandas as pd
+            from signals.train import WalkForwardTrainer
+            from signals.features import FEATURE_COLUMNS
+            from signals.model import ModelRegistry
+
+            log.info("auto_retrain_started")
+
+            # Fetch recent equity OHLCV from TimescaleDB for retraining
+            from data.store import get_engine
+            engine = get_engine()
+            df = pd.read_sql(
+                "SELECT * FROM ohlcv WHERE time >= NOW() - INTERVAL '30 months' ORDER BY time",
+                engine,
+                parse_dates=["time"],
+                index_col="time",
+            )
+
+            if len(df) < 500:
+                log.warning("auto_retrain_skipped_insufficient_data", rows=len(df))
+                self._send_alert("⚠️ Auto-retrain skipped — insufficient data (< 500 rows).")
+                return
+
+            trainer = WalkForwardTrainer(train_months=24, test_months=3)
+            results = trainer.run(df, features=FEATURE_COLUMNS, label="label",
+                                  experiment_name="nse_equity_signals_auto")
+            trainer.save_drift_reference(df, FEATURE_COLUMNS)
+
+            mean_auc = results.get("mean_auc", 0.0)
+            log.info("auto_retrain_complete", mean_auc=round(mean_auc, 4), n_folds=results.get("n_folds"))
+
+            if mean_auc < 0.60:
+                log.info("auto_retrain_no_promote", mean_auc=mean_auc)
+                self._send_alert(
+                    f"🔁 Retrain complete — AUC={mean_auc:.4f} (below 0.60 threshold, not promoted)."
+                )
+                return
+
+            # Promote best fold to Production in MLflow
+            import mlflow
+            folds = results.get("folds", [])
+            if not folds:
+                log.warning("auto_retrain_no_folds")
+                self._send_alert("⚠️ Retrain complete but no fold data returned — not promoting.")
+                return
+
+            best_fold = max(folds, key=lambda f: f.get("auc", 0.0))
+            best_run_id = best_fold.get("run_id", "")
+            if not best_run_id:
+                log.warning("auto_retrain_no_run_id")
+                self._send_alert("⚠️ Retrain complete but best fold has no run_id — not promoting.")
+                return
+
+            version = self._registry.register_model(
+                run_id=best_run_id,
+                segment="equity",
+                model_path=f"runs:/{best_run_id}/model",
+            )
+
+            client = mlflow.MlflowClient()
+            client.transition_model_version_stage(
+                name="trading_signal_equity",
+                version=version,
+                stage="Production",
+                archive_existing_versions=True,
+            )
+
+            log.info("auto_promote_success", version=version, auc=round(mean_auc, 4))
+            self._send_alert(
+                f"✅ Auto-retrain promoted v{version} to Production — AUC={mean_auc:.4f}"
+            )
+
+        except Exception as exc:
+            log.error("auto_retrain_failed", error=str(exc))
+            self._send_alert(f"❌ Auto-retrain failed: {exc}")
 
     # ------------------------------------------------------------------
     # Graceful shutdown
@@ -396,7 +486,7 @@ class TradingSystem:
 
             # Cross-asset penalty: reduce exposure when many positions are open
             n_open = len(self._open_positions)
-            cross_asset_penalty = max(0.5, 1.0 - n_open * 0.1)
+            cross_asset_penalty = min(0.5, n_open * 0.1)  # 0.0 → 0.5, never eliminate
 
             current_price = float(last_row["close"].iloc[0])
             vol = float(last_row.get("realized_vol_20", pd.Series([0.30])).iloc[0])
@@ -406,7 +496,7 @@ class TradingSystem:
                 total_capital=capital,
                 max_position_pct=settings.crypto_max_position_pct,
             )
-            size_inr = crypto_sizer.size(signal_prob, vol, capital) * cross_asset_penalty
+            size_inr = crypto_sizer.size(signal_prob, vol, capital, correlation_penalty=cross_asset_penalty)
             qty = crypto_sizer.shares(size_inr, current_price) if current_price > 0 else 0
 
             if qty <= 0:
@@ -444,7 +534,21 @@ class TradingSystem:
                 if self._sentiment else 0.0
             )
             last_row = feature_df.iloc[[-1]].copy()
-            probs = self._model.predict(last_row[FEATURE_COLUMNS])
+
+            # A/B routing: route signal to champion (Production) or challenger (Staging) model
+            date_str = last_row.index[-1].strftime("%Y-%m-%d") if hasattr(last_row.index[-1], "strftime") else str(last_row.index[-1])
+            ab_slot = self._ab_router.route(symbol=symbol, date=date_str)
+            model_to_use = self._model
+            if ab_slot == "challenger":
+                if self._challenger_model is None:
+                    try:
+                        self._challenger_model = self._registry.get_latest_model(segment="EQ", stage="Staging")
+                    except RuntimeError:
+                        ab_slot = "champion"   # fall back gracefully
+                else:
+                    model_to_use = self._challenger_model
+
+            probs = model_to_use.predict(last_row[FEATURE_COLUMNS])
             signal_prob = float(probs.iloc[0])
 
             threshold = (

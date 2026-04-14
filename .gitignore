@@ -39,3 +39,4 @@ Thumbs.db
 
 # TLS certs
 deploy/nginx/certs/
+.models/

@@ -45,9 +45,19 @@ class PositionSizer:
         signal_probability: float,
         asset_volatility: float,
         current_capital: float,
+        correlation_penalty: float = 0.0,
     ) -> float:
         """
         Return position size in INR.
+
+        Parameters
+        ----------
+        signal_probability  : Model-predicted P(positive outcome).
+        asset_volatility    : Annualised volatility of the asset.
+        current_capital     : Available capital (INR or USD).
+        correlation_penalty : Fraction [0, 1] to reduce size by when the new
+                              position is correlated with existing open positions.
+                              E.g. 0.3 → final_size *= 0.7. Clamped to [0, 1].
 
         Returns 0.0 for signals with no edge (probability ≤ 0.5).
         """
@@ -61,8 +71,10 @@ class PositionSizer:
         vol_safe = max(asset_volatility, _VOL_FLOOR)
         vol_scalar = min(1.0, _VOL_TARGET / vol_safe)
 
+        penalty = max(0.0, min(1.0, correlation_penalty))
+
         base_size = current_capital * self._max_position_pct
-        final_size = base_size * min(half_kelly, 1.0) * vol_scalar
+        final_size = base_size * min(half_kelly, 1.0) * vol_scalar * (1.0 - penalty)
 
         result = round(final_size, 2)
         log.debug(
@@ -71,6 +83,7 @@ class PositionSizer:
             vol=asset_volatility,
             half_kelly=round(half_kelly, 4),
             vol_scalar=round(vol_scalar, 4),
+            correlation_penalty=round(penalty, 4),
             size_inr=result,
         )
         return result

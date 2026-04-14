@@ -36,6 +36,7 @@ def _mock_settings(**overrides) -> MagicMock:
     s.mlflow_tracking_uri = "http://localhost:5000"
     s.coingecko_api_key = None
     s.crypto_min_volume_usd = 5_000_000
+    s.ab_test_pct = 0.0
     for k, v in overrides.items():
         setattr(s, k, v)
     return s

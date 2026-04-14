@@ -129,24 +129,29 @@ class ModelRegistry:
         mlflow.set_tracking_uri(tracking_uri)
         self._client = mlflow.MlflowClient()
 
-    def get_latest_model(self, segment: str = "EQ") -> SignalModel:
+    def get_latest_model(self, segment: str = "EQ", stage: str = "Production") -> SignalModel:
         """
-        Fetch the Production-stage model for *segment* from MLflow.
+        Fetch the *stage*-stage model for *segment* from MLflow.
 
-        Raises RuntimeError if no Production model is registered.
+        Parameters
+        ----------
+        segment : Registry segment name, e.g. "EQ" or "CRYPTO".
+        stage   : MLflow model stage — "Production" (default) or "Staging".
+
+        Raises RuntimeError if no model is found in the requested stage.
         """
         model_name = f"{_MODEL_NAME_PREFIX}_{segment.lower()}"
-        versions = self._client.get_latest_versions(model_name, stages=["Production"])
+        versions = self._client.get_latest_versions(model_name, stages=[stage])
 
         if not versions:
             raise RuntimeError(
-                f"No Production model found for '{model_name}'. "
+                f"No {stage} model found for '{model_name}'. "
                 "Train and register a model first."
             )
 
         latest = versions[0]
         model_path = latest.source
-        log.info("registry_model_fetched", model=model_name, version=latest.version)
+        log.info("registry_model_fetched", model=model_name, version=latest.version, stage=stage)
         return SignalModel(model_path=model_path)
 
     def register_model(

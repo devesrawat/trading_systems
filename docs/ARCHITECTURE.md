@@ -1344,7 +1344,7 @@ Gate: All existing tests pass. VCP scanner appears in pre-market logs.
 - [ ] Retrain XGBoost with augmented feature set; log as new MLflow experiment
 - [x] Add Telegram command handlers: `/status`, `/portfolio`, `/pause`, `/resume` (new `monitoring/telegram_bot.py`)
 - [x] Add `PortfolioMonitor.get_current_heat()`, `get_daily_drawdown()`, `get_open_positions()`, `get_open_positions_detail()`
-- [ ] Add correlation penalty to `PositionSizer` (sector-based proxy)
+- [x] Add correlation penalty to `PositionSizer` (sector-based proxy) — `correlation_penalty` param in `size()`, clamped [0,1]
 - [x] Add `CircuitBreaker.halt_reason()`, `force_halt()`, `operator_pause()`, `operator_resume()` (separate from risk halt)
 
 Gate: System suppresses signals in CHOPPY regime. Verified against Jan-Mar 2023 Nifty data (choppy range market). Telegram commands respond correctly.
@@ -1354,9 +1354,9 @@ Gate: System suppresses signals in CHOPPY regime. Verified against Jan-Mar 2023 
 - [x] Implement full `_execute_crypto_signal()` in orchestrator:
   - Binance OHLCV fetch → feature build → crypto XGBoost predict → size → gate → Telegram
   - Add crypto-specific features: funding_rate_8h, open_interest_change_1d, fear_greed_index
-- [ ] Train separate crypto XGBoost model on 2yr BTC/ETH/SOL daily data
-- [ ] Add `CryptoMetricsCollector`: fear/greed from Alternative.me, funding rates from Binance (both free)
-- [ ] Add `BinanceBrokerAdapter` skeleton (paper mode only; live crypto execution deferred)
+- [x] Train separate crypto XGBoost model on 2yr BTC/ETH/SOL daily data (`backtest/train_crypto.py`)
+- [x] Add `CryptoMetricsCollector`: fear/greed from Alternative.me, funding rates from Binance (both free) (`data/ingest.py:CryptoMetricsCollector`)
+- [x] Add `BinanceBrokerAdapter` skeleton (paper mode only; live crypto execution deferred) (`execution/broker.py`)
 - [x] Cross-asset correlation penalty: BTC/Nifty ~0.3 correlation → apply 0.1 size penalty on crypto when NSE positions open
 
 Gate: BTC/ETH/SOL signals appear in Telegram with valid entry/stop/target. Backtested Sharpe > 0.5 on 2yr OOS.
@@ -1369,7 +1369,7 @@ Gate: BTC/ETH/SOL signals appear in Telegram with valid entry/stop/target. Backt
 - [ ] **Chronos cold-start**: Integrate for stocks with < 252 bars history (new IPOs, recent listings)
 - [x] **Concept drift detection**: Daily KS-test on feature distribution vs training distribution; auto-trigger retrain if p < 0.05 (`monitoring/drift_detector.py`)
 - [x] **SHAP explanations**: Add top-3 feature drivers to each Telegram signal message
-- [ ] **Walk-forward automation**: Cron retrain Sunday 02:00 IST; auto-promote to MLflow Production if Sharpe > 0.8
+- [x] **Walk-forward automation**: Cron retrain Sunday 02:00 IST; auto-promote to MLflow Production if mean_AUC > 0.60 (`orchestrator/main.py:_auto_retrain_and_promote`)
 - [x] **F&O PCR signal**: PCR > 1.5 = bullish; PCR < 0.7 = bearish; include as regime confirmatory signal
 
 Gate: Daily macro briefing appears in Telegram. Earnings blackout filter active. SHAP top features show in signal messages.
@@ -1380,7 +1380,7 @@ Gate: Daily macro briefing appears in Telegram. Earnings blackout filter active.
 - [x] Daily reconciliation: compare paper portfolio P&L vs actual price movements; alert if drift > 0.5% (`monitoring/reconciliation.py`)
 - [ ] TimescaleDB automated backup to S3 (Backblaze B2: ~INR 50/month for 10GB)
 - [x] Health check: alert to Telegram if system hasn't written to Redis in > 15min during market hours (`monitoring/health.py`)
-- [ ] A/B test framework: route 20% of signals to TFT model; compare Sharpe over 3-month window
+- [x] A/B test framework: route configurable % of signals to challenger (Staging) model; record outcomes in Redis for champion vs challenger comparison (`orchestrator/ab_router.py`)
 - [x] Position exit signals: add XGBoost exit model for partial profit taking before stop/target (`signals/exit_model.py`)
 
 ---

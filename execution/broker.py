@@ -315,6 +315,98 @@ class UpstoxBrokerAdapter(BrokerAdapter):
 
 
 # ---------------------------------------------------------------------------
+# Binance (paper mode only — live crypto execution deferred)
+# ---------------------------------------------------------------------------
+
+class BinanceBrokerAdapter(BrokerAdapter):
+    """
+    Binance adapter — paper mode only.
+
+    Live order execution is intentionally not implemented; all calls that
+    would modify state raise :exc:`NotImplementedError`. Read-only methods
+    (``get_quote``, ``get_balance``) hit the public Binance REST API.
+
+    This skeleton fulfils the ``BrokerAdapter`` contract so that
+    ``get_broker_adapter()`` can return a typed broker for crypto workflows
+    without triggering live trades.
+
+    Usage
+    -----
+    When ``data_provider = binance`` and ``paper_trade_mode = false``,
+    the factory returns this adapter. Live trading is still blocked by the
+    ``is_paper = True`` guard in :class:`~execution.orders.OrderExecutor`.
+    """
+
+    _BINANCE_BASE = "https://api.binance.com"
+
+    def __init__(self, initial_capital: float = 500_000.0) -> None:
+        self._balance = initial_capital
+
+    @property
+    def is_paper(self) -> bool:
+        return True  # Binance live execution is deferred
+
+    # ------------------------------------------------------------------
+    # Write methods — blocked until live execution is implemented
+    # ------------------------------------------------------------------
+
+    def place_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: int,
+        tag: str,
+        price: float = 0.0,
+        order_type: str = "MARKET",
+        intraday: bool = True,
+    ) -> str:
+        raise NotImplementedError(
+            "BinanceBrokerAdapter.place_order: live crypto execution is not yet "
+            "implemented. Set PAPER_TRADE_MODE=true for paper trading."
+        )
+
+    def cancel_order(self, order_id: str) -> bool:
+        log.info("binance_paper_order_cancelled", order_id=order_id)
+        return True
+
+    def get_order_status(self, order_id: str) -> dict[str, Any]:
+        return {"order_id": order_id, "status": "PAPER_COMPLETE"}
+
+    # ------------------------------------------------------------------
+    # Read methods — real Binance public REST
+    # ------------------------------------------------------------------
+
+    def get_balance(self) -> float:
+        """Return the paper capital balance (live balance requires API key)."""
+        return self._balance
+
+    def get_quote(self, symbols: list[str]) -> dict[str, dict[str, float]]:
+        """
+        Fetch last price for *symbols* from Binance public ticker API.
+
+        Returns ``{symbol: {"last_price": float}}``.
+        Symbols must use Binance format (e.g. "BTCUSDT").
+        Failed lookups are silently omitted.
+        """
+        import requests
+
+        result: dict[str, dict[str, float]] = {}
+        for symbol in symbols:
+            try:
+                resp = requests.get(
+                    f"{self._BINANCE_BASE}/api/v3/ticker/price",
+                    params={"symbol": symbol.upper()},
+                    timeout=5,
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                result[symbol] = {"last_price": float(data["price"])}
+            except Exception as exc:
+                log.warning("binance_quote_failed", symbol=symbol, error=str(exc))
+        return result
+
+
+# ---------------------------------------------------------------------------
 # Paper (dev / crypto / no-broker)
 # ---------------------------------------------------------------------------
 
@@ -398,10 +490,10 @@ def get_broker_adapter() -> BrokerAdapter:
         log.info("broker_adapter_upstox")
         return UpstoxBrokerAdapter(access_token=settings.upstox_access_token)
 
-    # binance falls through to paper (live crypto execution deferred)
+    # binance — paper mode skeleton (live execution deferred)
     if provider == "binance":
-        log.info("broker_adapter_paper_binance", capital=settings.initial_capital)
-        return PaperBrokerAdapter(initial_capital=settings.initial_capital)
+        log.info("broker_adapter_binance_paper", capital=settings.initial_capital)
+        return BinanceBrokerAdapter(initial_capital=settings.initial_capital)
 
     raise ValueError(
         f"Unknown data_provider: {provider!r}. "
