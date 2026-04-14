@@ -384,14 +384,15 @@ class BinanceBrokerAdapter(BrokerAdapter):
         """
         Fetch last price for *symbols* from Binance public ticker API.
 
-        Returns ``{symbol: {"last_price": float}}``.
+        Requests are issued in parallel (ThreadPoolExecutor) to cut latency
+        from O(N×RTT) to O(RTT).  Returns ``{symbol: {"last_price": float}}``.
         Symbols must use Binance format (e.g. "BTCUSDT").
         Failed lookups are silently omitted.
         """
         import requests
+        from concurrent.futures import ThreadPoolExecutor
 
-        result: dict[str, dict[str, float]] = {}
-        for symbol in symbols:
+        def _fetch_one(symbol: str) -> tuple[str, dict[str, float] | None]:
             try:
                 resp = requests.get(
                     f"{self._BINANCE_BASE}/api/v3/ticker/price",
@@ -399,10 +400,16 @@ class BinanceBrokerAdapter(BrokerAdapter):
                     timeout=5,
                 )
                 resp.raise_for_status()
-                data = resp.json()
-                result[symbol] = {"last_price": float(data["price"])}
+                return symbol, {"last_price": float(resp.json()["price"])}
             except Exception as exc:
                 log.warning("binance_quote_failed", symbol=symbol, error=str(exc))
+                return symbol, None
+
+        result: dict[str, dict[str, float]] = {}
+        with ThreadPoolExecutor(max_workers=min(10, len(symbols))) as pool:
+            for sym, data in pool.map(_fetch_one, symbols):
+                if data is not None:
+                    result[sym] = data
         return result
 
 

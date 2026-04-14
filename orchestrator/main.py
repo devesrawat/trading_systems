@@ -24,6 +24,8 @@ from __future__ import annotations
 import signal
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime
 from typing import Any
 
 import pandas as pd
@@ -32,7 +34,7 @@ import structlog
 from config.settings import settings
 from data.providers import get_crypto_provider, get_provider
 from data.redis_keys import RedisKeys
-from data.store import get_ohlcv, get_redis, get_universe
+from data.store import get_ohlcv, get_ohlcv_batch, get_redis, get_universe
 from execution.broker import get_broker_adapter
 from execution.logger import TradeLogger
 from execution.orders import OrderExecutor
@@ -137,14 +139,19 @@ class TradingSystem:
         # Universe cache
         # ------------------------------------------------------------------
         self._equity_universe: list[str] = []
+        self._equity_instruments: list[dict] = []   # full instrument dicts (token + symbol)
         self._crypto_universe: list[str] = []
         self._vcp_candidates: list[dict] = []
         self._open_positions: set[str] = set()
+
+        # Cached capital — refreshed once per trading_loop to avoid per-symbol broker calls
+        self._cached_capital: float = settings.initial_capital
 
         # Regime detector — used in trading_loop to gate signal emission
         from signals.regime import RegimeDetector
         self._regime_detector = RegimeDetector()
         self._current_regime = None
+        self._regime_last_updated: datetime | None = None
 
     # ------------------------------------------------------------------
     # Pre-market  (equity: 08:45 IST | crypto: called once at startup)
@@ -233,6 +240,12 @@ class TradingSystem:
                     f"daily drawdown {dd['daily_dd']:.2%} exceeded {settings.daily_dd_limit:.2%}"
                 )
                 return
+
+            # Refresh capital once per loop — avoids per-symbol broker API round-trips
+            try:
+                self._cached_capital = self._broker.get_balance() or settings.initial_capital
+            except Exception:
+                pass  # keep stale value from previous iteration
 
             # Equity cycle — regime-gated; suppression does NOT block crypto
             if self._market_type in ("equity", "both"):
@@ -470,7 +483,7 @@ class TradingSystem:
             if features_df.empty:
                 return
 
-            last_row = features_df.iloc[[-1]].copy()
+            last_row = features_df.iloc[[-1]]
             probs = self._crypto_model.predict(last_row[FEATURE_COLUMNS])
             signal_prob = float(probs.iloc[0])
 
@@ -490,7 +503,7 @@ class TradingSystem:
 
             current_price = float(last_row["close"].iloc[0])
             vol = float(last_row.get("realized_vol_20", pd.Series([0.30])).iloc[0])
-            capital = self._broker.get_balance() or settings.initial_capital
+            capital = self._cached_capital
 
             crypto_sizer = PositionSizer(
                 total_capital=capital,
@@ -533,7 +546,7 @@ class TradingSystem:
                 self._sentiment.get_latest_score(symbol)
                 if self._sentiment else 0.0
             )
-            last_row = feature_df.iloc[[-1]].copy()
+            last_row = feature_df.iloc[[-1]]
 
             # A/B routing: route signal to champion (Production) or challenger (Staging) model
             date_str = last_row.index[-1].strftime("%Y-%m-%d") if hasattr(last_row.index[-1], "strftime") else str(last_row.index[-1])
@@ -579,7 +592,7 @@ class TradingSystem:
 
             current_price = float(last_row["close"].iloc[0])
             vol = float(last_row.get("realized_vol_20", pd.Series([0.20])).iloc[0])
-            capital = self._broker.get_balance() or settings.initial_capital
+            capital = self._cached_capital
             size_inr = self._sizer.size(signal_prob, vol, capital)
 
             # Apply regime size multiplier (only for equity; crypto ignores regime for now)
@@ -623,7 +636,8 @@ class TradingSystem:
     def _load_equity_universe(self) -> None:
         try:
             instruments = get_universe(segment="EQ")
-            self._equity_universe = [i["symbol"] for i in instruments[:_TOP_N_EQUITY]]
+            self._equity_instruments = instruments[:_TOP_N_EQUITY]
+            self._equity_universe = [i["symbol"] for i in self._equity_instruments]
             log.info("equity_universe_loaded", count=len(self._equity_universe))
         except Exception as exc:
             log.error("equity_universe_load_failed", error=str(exc))
@@ -651,18 +665,28 @@ class TradingSystem:
     # ------------------------------------------------------------------
 
     def _update_regime(self) -> None:
-        """Detect current market regime using Nifty 50 data + India VIX."""
+        """Detect current market regime using Nifty 50 data + India VIX.
+
+        Results are cached for 60 minutes — regime state doesn't change bar-by-bar.
+        """
+        now = datetime.utcnow()
+        if (
+            self._current_regime is not None
+            and self._regime_last_updated is not None
+            and (now - self._regime_last_updated).total_seconds() < 3600
+        ):
+            return
         try:
-            from datetime import datetime, timedelta
+            from datetime import timedelta
             from data.ingest import NSEDataScraper
             nifty_token = settings.nifty50_token  # set in .env / settings
-            to_date = datetime.utcnow()
-            nifty_df = get_ohlcv(nifty_token, to_date - timedelta(days=400), to_date, interval="day")
+            nifty_df = get_ohlcv(nifty_token, now - timedelta(days=400), now, interval="day")
             if len(nifty_df) < 252:
                 log.warning("regime_update_insufficient_data", rows=len(nifty_df))
                 return
             india_vix = NSEDataScraper().get_india_vix()
             self._current_regime = self._regime_detector.detect(nifty_df, india_vix)
+            self._regime_last_updated = now
             log.info(
                 "regime_updated",
                 state=self._current_regime.state.value,
@@ -690,24 +714,37 @@ class TradingSystem:
                 self._crypto_model = None
 
     def _fetch_equity_features(self) -> dict[str, pd.DataFrame]:
-        from datetime import datetime, timedelta
-        feature_map: dict[str, pd.DataFrame] = {}
+        from datetime import timedelta
+
         to_date = datetime.utcnow()
         # 400 calendar days: ~280 trading days — enough for 252-bar warmup + signal rows
         from_date = to_date - timedelta(days=400)
 
-        instruments = get_universe(segment="EQ")
-        for inst in instruments[:_TOP_N_EQUITY]:
-            token, symbol = inst["token"], inst["symbol"]
+        instruments = self._equity_instruments or get_universe(segment="EQ")[:_TOP_N_EQUITY]
+        tokens = [i["token"] for i in instruments]
+        token_to_symbol = {i["token"]: i["symbol"] for i in instruments}
+
+        # Single round-trip to TimescaleDB for all tokens
+        ohlcv_map = get_ohlcv_batch(tokens, from_date, to_date, interval="day")
+
+        def _build_one(token: int) -> tuple[str, pd.DataFrame | None]:
+            symbol = token_to_symbol[token]
+            df = ohlcv_map.get(token)
+            if df is None or len(df) < 60:
+                return symbol, None
             try:
-                df = get_ohlcv(token, from_date, to_date, interval="day")
-                if len(df) < 60:
-                    continue
                 features = build_features(df, include_labels=False)
-                if not features.empty:
-                    feature_map[symbol] = features
+                return symbol, features if not features.empty else None
             except Exception as exc:
                 log.debug("equity_feature_error", symbol=symbol, error=str(exc))
+                return symbol, None
+
+        feature_map: dict[str, pd.DataFrame] = {}
+        # Parallel feature building — CPU-bound pandas operations
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            for symbol, features in pool.map(_build_one, tokens):
+                if features is not None:
+                    feature_map[symbol] = features
         return feature_map
 
     def _check_model_drift(self) -> None:

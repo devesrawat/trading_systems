@@ -189,8 +189,9 @@ def build_features(
     # ------------------------------------------------------------------ #
     # MEAN REVERSION
     # ------------------------------------------------------------------ #
-    roll_mean_20 = close.rolling(20).mean()
-    roll_std_20 = close.rolling(20).std().replace(0, np.nan)
+    # bb_mid IS the 20-period SMA of close; (bb_upper - bb_mid) / 2 = rolling std
+    roll_mean_20 = out["bb_mid"]
+    roll_std_20 = ((out["bb_upper"] - out["bb_mid"]) / 2.0).replace(0, np.nan)
     out["zscore_20"] = (close - roll_mean_20) / roll_std_20
 
     high_52w = high.rolling(252).max()

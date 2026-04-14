@@ -14,7 +14,7 @@ from typing import Any
 import pandas as pd
 import redis as redis_lib
 import structlog
-from sqlalchemy import create_engine, text
+from sqlalchemy import bindparam, create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
 
@@ -82,6 +82,16 @@ _OHLCV_UPSERT = text("""
     ON CONFLICT DO NOTHING
 """)
 
+_OHLCV_BATCH_QUERY = text("""
+    SELECT time, token, symbol, open, high, low, close, volume, interval
+    FROM ohlcv
+    WHERE token IN :tokens
+      AND interval = :interval
+      AND time >= :from_date
+      AND time <= :to_date
+    ORDER BY token, time ASC
+""").bindparams(bindparam("tokens", expanding=True))
+
 
 def get_ohlcv(
     token: int,
@@ -110,6 +120,35 @@ def get_ohlcv(
         )
     log.debug("ohlcv_fetched", token=token, interval=interval, rows=len(df))
     return df
+
+
+def get_ohlcv_batch(
+    tokens: list[int],
+    from_date: date | datetime,
+    to_date: date | datetime,
+    interval: str,
+) -> dict[int, pd.DataFrame]:
+    """
+    Fetch OHLCV for multiple tokens in a **single** round-trip to TimescaleDB.
+
+    Returns ``{token: DataFrame}`` with DatetimeIndex sorted ascending.
+    Tokens with no data are absent from the result dict.
+    """
+    if not tokens:
+        return {}
+    engine = get_engine()
+    with engine.connect() as conn:
+        df = pd.read_sql(
+            _OHLCV_BATCH_QUERY,
+            conn,
+            params={"tokens": list(tokens), "interval": interval, "from_date": from_date, "to_date": to_date},
+            parse_dates=["time"],
+        )
+    result: dict[int, pd.DataFrame] = {}
+    for token_val, group in df.groupby("token"):
+        result[int(token_val)] = group.set_index("time").sort_index()
+    log.debug("ohlcv_batch_fetched", n_tokens=len(tokens), interval=interval, total_rows=len(df))
+    return result
 
 
 def write_ohlcv(df: pd.DataFrame) -> None:
@@ -191,14 +230,24 @@ def write_crypto_tick(symbol: str, tick: dict[str, Any]) -> None:
 # Universe helpers
 # ---------------------------------------------------------------------------
 
+_instruments_cache: list[dict[str, Any]] | None = None
+_instruments_cache_path: Path | None = None
+
+
+def _load_instruments() -> list[dict[str, Any]]:
+    """Load instruments.json once per path. Re-reads if the path changes (e.g., in tests)."""
+    global _instruments_cache, _instruments_cache_path
+    if _instruments_cache is None or _instruments_cache_path != _INSTRUMENTS_PATH:
+        with open(_INSTRUMENTS_PATH) as f:
+            _instruments_cache = json.load(f).get("instruments", [])
+        _instruments_cache_path = _INSTRUMENTS_PATH
+    return _instruments_cache
+
+
 def get_universe(segment: str = "EQ") -> list[dict[str, Any]]:
-    """Load instruments from instruments.json, filtered by segment."""
-    with open(_INSTRUMENTS_PATH) as f:
-        data = json.load(f)
-    instruments: list[dict[str, Any]] = data.get("instruments", [])
-    if segment:
-        instruments = [i for i in instruments if i.get("segment") == segment]
-    return instruments
+    """Return instruments filtered by segment. JSON is read once per process."""
+    instruments = _load_instruments()
+    return [i for i in instruments if i.get("segment") == segment] if segment else list(instruments)
 
 
 # ---------------------------------------------------------------------------
