@@ -31,10 +31,12 @@ import structlog
 
 from config.settings import settings
 from data.providers import get_crypto_provider, get_provider
-from data.store import get_ohlcv, get_universe
+from data.redis_keys import RedisKeys
+from data.store import get_ohlcv, get_redis, get_universe
 from execution.broker import get_broker_adapter
 from execution.logger import TradeLogger
 from execution.orders import OrderExecutor
+from monitoring.health import HealthMonitor
 from risk.breakers import CircuitBreaker
 from risk.monitor import PortfolioMonitor
 from risk.sizer import PositionSizer
@@ -118,6 +120,7 @@ class TradingSystem:
         # ------------------------------------------------------------------
         self._registry = ModelRegistry(tracking_uri=settings.mlflow_tracking_uri)
         self._model: SignalModel | None = None
+        self._crypto_model: SignalModel | None = None
 
         # Sentiment — equity only (crypto uses sources_crypto separately)
         self._sentiment = None
@@ -181,9 +184,18 @@ class TradingSystem:
         capital = self._broker.get_balance() or settings.initial_capital
         self._circuit_breaker.reset_daily(current_capital=capital)
 
-        # 7. Telegram health check
+        # 7. Telegram health check (prepend yesterday's macro briefing if available)
+        briefing_prefix = ""
+        try:
+            from llm.pipeline import LLMSentimentEngine
+            cached = LLMSentimentEngine.get_cached_briefing()
+            if cached:
+                briefing_prefix = cached + "\n\n"
+        except Exception:
+            pass
+
         self._send_alert(
-            f"Pre-market OK | market={self._market_type} | "
+            f"{briefing_prefix}Pre-market OK | market={self._market_type} | "
             f"paper={settings.paper_trade_mode} | "
             f"capital={capital:,.0f} | "
             f"model={'OK' if self._model else 'MISSING'} | "
@@ -197,32 +209,51 @@ class TradingSystem:
 
     def trading_loop(self) -> None:
         """One scan-signal-execute cycle for the active universe(s)."""
-        if self._circuit_breaker.is_halted():
-            log.warning("trading_loop_skipped_circuit_halted")
-            return
+        try:
+            # Redis kill switch — checked first so a running process can be halted dynamically
+            try:
+                if get_redis().get(RedisKeys.TRADING_KILL_SWITCH) == b"1":
+                    log.warning("trading_loop_skipped_kill_switch_active")
+                    return
+            except Exception:
+                pass
 
-        dd = self._monitor.get_drawdown()
-        if dd["daily_dd"] > settings.daily_dd_limit:
-            self._circuit_breaker.halt(
-                f"daily drawdown {dd['daily_dd']:.2%} exceeded {settings.daily_dd_limit:.2%}"
-            )
-            return
+            if self._circuit_breaker.is_halted():
+                log.warning("trading_loop_skipped_circuit_halted")
+                return
 
-        if self._market_type in ("equity", "both"):
-            self._update_regime()
-            if self._current_regime is not None and self._regime_detector.should_suppress_new_entries(
-                self._current_regime.state
-            ):
-                log.info(
-                    "trading_loop_skipped_choppy_regime",
-                    regime=self._current_regime.state.value,
+            dd = self._monitor.get_drawdown()
+            if dd["daily_dd"] > settings.daily_dd_limit:
+                self._circuit_breaker.halt(
+                    f"daily drawdown {dd['daily_dd']:.2%} exceeded {settings.daily_dd_limit:.2%}"
                 )
                 return
-            self._run_equity_cycle()
-        if self._market_type in ("crypto", "both"):
-            self._run_crypto_cycle()
 
-        self._monitor.get_drawdown()
+            # Equity cycle — regime-gated; suppression does NOT block crypto
+            if self._market_type in ("equity", "both"):
+                self._update_regime()
+                if self._current_regime is not None and self._regime_detector.should_suppress_new_entries(
+                    self._current_regime.state
+                ):
+                    log.info(
+                        "equity_cycle_skipped_choppy_regime",
+                        regime=self._current_regime.state.value,
+                    )
+                else:
+                    self._run_equity_cycle()
+
+            # Crypto cycle — always runs regardless of equity regime
+            if self._market_type in ("crypto", "both"):
+                self._run_crypto_cycle()
+
+            self._monitor.get_drawdown()
+
+        finally:
+            # Heartbeat fires even on early returns so the health monitor stays informed
+            try:
+                HealthMonitor().write_heartbeat()
+            except Exception:
+                pass
 
     # ------------------------------------------------------------------
     # Post-market  (equity: 15:35 IST | crypto: daily midnight UTC)
@@ -238,6 +269,20 @@ class TradingSystem:
             self._check_model_drift()
         except Exception as exc:
             log.error("drift_check_failed", error=str(exc))
+        try:
+            self._check_feature_drift()
+        except Exception as exc:
+            log.error("feature_drift_check_failed", error=str(exc))
+        try:
+            from monitoring.reconciliation import DailyReconciler
+            DailyReconciler(self._broker).reconcile(self._open_positions)
+        except Exception as exc:
+            log.error("reconciliation_failed", error=str(exc))
+        try:
+            from llm.pipeline import LLMSentimentEngine
+            LLMSentimentEngine().generate_macro_briefing()
+        except Exception as exc:
+            log.error("macro_briefing_generation_failed", error=str(exc))
         self._open_positions.clear()
         log.info("post_market_summary_complete")
 
@@ -314,13 +359,74 @@ class TradingSystem:
                 log.error("crypto_signal_error", symbol=symbol, error=str(exc))
 
     def _execute_crypto_signal(self, symbol: str) -> None:
-        """Placeholder crypto signal — extend with FinBERT + technical features."""
-        from data.store import get_latest_crypto_tick
-        tick = get_latest_crypto_tick(symbol)
-        if tick is None:
+        """Full crypto signal pipeline: fetch → features → model → risk → order."""
+        if not self._crypto_model:
+            log.debug("crypto_signal_skipped_no_model", symbol=symbol)
             return
-        # TODO: build crypto features, run XGBoost, execute
-        log.debug("crypto_tick_received", symbol=symbol, price=tick.get("last_price"))
+
+        try:
+            from datetime import datetime, timedelta
+            to_date = datetime.utcnow()
+            from_date = to_date - timedelta(days=120)
+
+            df = self._crypto_provider.fetch_historical(
+                symbol, from_date, to_date, interval="day"
+            )
+            if df is None or len(df) < 60:
+                log.debug("crypto_signal_insufficient_data", symbol=symbol, rows=len(df) if df is not None else 0)
+                return
+
+            features_df = build_features(df, include_labels=False)
+            if features_df.empty:
+                return
+
+            last_row = features_df.iloc[[-1]].copy()
+            probs = self._crypto_model.predict(last_row[FEATURE_COLUMNS])
+            signal_prob = float(probs.iloc[0])
+
+            self._logger.log_signal(
+                symbol=symbol,
+                features_dict=last_row[FEATURE_COLUMNS].iloc[0].to_dict(),
+                signal_prob=signal_prob,
+                action_taken="BUY" if signal_prob >= settings.crypto_signal_threshold else "SKIP",
+            )
+
+            if signal_prob < settings.crypto_signal_threshold or self._circuit_breaker.is_halted():
+                return
+
+            # Cross-asset penalty: reduce exposure when many positions are open
+            n_open = len(self._open_positions)
+            cross_asset_penalty = max(0.5, 1.0 - n_open * 0.1)
+
+            current_price = float(last_row["close"].iloc[0])
+            vol = float(last_row.get("realized_vol_20", pd.Series([0.30])).iloc[0])
+            capital = self._broker.get_balance() or settings.initial_capital
+
+            crypto_sizer = PositionSizer(
+                total_capital=capital,
+                max_position_pct=settings.crypto_max_position_pct,
+            )
+            size_inr = crypto_sizer.size(signal_prob, vol, capital) * cross_asset_penalty
+            qty = crypto_sizer.shares(size_inr, current_price) if current_price > 0 else 0
+
+            if qty <= 0:
+                return
+
+            order_id = self._executor.place_market_order(
+                symbol=symbol,
+                transaction_type="BUY",
+                quantity=qty,
+                tag=f"crypto_xgb_{signal_prob:.2f}",
+            )
+            self._open_positions.add(symbol)
+            log.info("crypto_order_placed", symbol=symbol, qty=qty, prob=round(signal_prob, 3), order_id=order_id)
+            self._send_alert(
+                f"🪙 Crypto BUY {symbol} | prob={signal_prob:.2%} | "
+                f"qty={qty} | price={current_price:,.4f} | penalty={cross_asset_penalty:.2f}"
+            )
+
+        except Exception as exc:
+            log.error("crypto_signal_execution_error", symbol=symbol, error=str(exc))
 
     # ------------------------------------------------------------------
     # Internal — shared signal execution
@@ -358,6 +464,15 @@ class TradingSystem:
             if action == "SKIP" or self._circuit_breaker.is_halted():
                 return
 
+            # Earnings blackout — skip BUY during earnings window
+            try:
+                from signals.filters import EarningsFilter
+                if EarningsFilter().is_blackout(symbol):
+                    log.info("signal_skipped_earnings_blackout", symbol=symbol)
+                    return
+            except Exception:
+                pass
+
             current_price = float(last_row["close"].iloc[0])
             vol = float(last_row.get("realized_vol_20", pd.Series([0.20])).iloc[0])
             capital = self._broker.get_balance() or settings.initial_capital
@@ -381,6 +496,18 @@ class TradingSystem:
             )
             self._open_positions.add(symbol)
             log.info("order_placed", symbol=symbol, qty=qty, prob=round(signal_prob, 3), order_id=order_id)
+
+            # Buy alert with SHAP attribution
+            try:
+                shap_dict = self._model.explain(last_row[FEATURE_COLUMNS].iloc[0].to_dict())
+                top_features = sorted(shap_dict.items(), key=lambda x: abs(x[1]), reverse=True)[:3]
+                shap_str = ", ".join(f"{k}={v:+.3f}" for k, v in top_features)
+                self._send_alert(
+                    f"📈 BUY {symbol} | prob={signal_prob:.2%} | "
+                    f"qty={qty} | price={current_price:,.2f}\nSHAP: {shap_str}"
+                )
+            except Exception:
+                pass
 
         except Exception as exc:
             log.error("signal_execution_error", symbol=symbol, error=str(exc))
@@ -450,6 +577,14 @@ class TradingSystem:
             log.warning("model_load_failed", error=str(exc))
             self._model = None
 
+        if self._market_type in ("crypto", "both"):
+            try:
+                self._crypto_model = self._registry.get_latest_model(segment="CRYPTO")
+                log.info("crypto_model_loaded")
+            except Exception as exc:
+                log.warning("crypto_model_load_failed", error=str(exc))
+                self._crypto_model = None
+
     def _fetch_equity_features(self) -> dict[str, pd.DataFrame]:
         from datetime import datetime, timedelta
         feature_map: dict[str, pd.DataFrame] = {}
@@ -479,6 +614,27 @@ class TradingSystem:
                 log.warning("model_drift_above_threshold", score=score)
         except Exception as exc:
             log.debug("drift_check_skipped", error=str(exc))
+
+    def _check_feature_drift(self) -> None:
+        """Run KS-based feature drift check against training reference distribution."""
+        if self._market_type not in ("equity", "both"):
+            return
+        try:
+            from monitoring.drift_detector import ConceptDriftDetector
+            feature_map = self._fetch_equity_features()
+            if not feature_map:
+                return
+            sample_symbol = next(iter(feature_map))
+            live_df = feature_map[sample_symbol]
+            detector = ConceptDriftDetector()
+            results = detector.check(live_df)
+            if detector.is_drifting(live_df):
+                drifted = [f for f, p in results.items() if p < 0.05]
+                msg = f"⚠️ Feature drift detected in {len(drifted)} features: {', '.join(drifted[:5])}"
+                log.warning("feature_drift_detected", drifted=drifted)
+                self._send_alert(msg)
+        except Exception as exc:
+            log.debug("feature_drift_check_skipped", error=str(exc))
 
     def _send_alert(self, message: str) -> None:
         try:

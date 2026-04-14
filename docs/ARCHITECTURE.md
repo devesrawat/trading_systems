@@ -1339,7 +1339,7 @@ Gate: All existing tests pass. VCP scanner appears in pre-market logs.
 - [x] Add `RegimeDetector` class in `signals/regime.py` (M3)
 - [x] Wire regime detection into `TradingSystem.trading_loop()` — suppress signals when CHOPPY
 - [x] Add `NSEDataScraper.get_fii_dii_flows()` and `get_india_vix()` in `data/ingest.py`; added `CryptoMetricsCollector`
-- [ ] Schedule FII/DII fetch at 16:30 IST via APScheduler
+- [x] Schedule FII/DII fetch at 16:30 IST via APScheduler
 - [x] Add 4 auxiliary features to `build_features()`: fii_net_cash_norm, india_vix, sentiment_score, regime_code
 - [ ] Retrain XGBoost with augmented feature set; log as new MLflow experiment
 - [x] Add Telegram command handlers: `/status`, `/portfolio`, `/pause`, `/resume` (new `monitoring/telegram_bot.py`)
@@ -1351,37 +1351,37 @@ Gate: System suppresses signals in CHOPPY regime. Verified against Jan-Mar 2023 
 
 ### Phase 2 — Crypto Completion (2-3 weeks)
 
-- [ ] Implement full `_execute_crypto_signal()` in orchestrator:
+- [x] Implement full `_execute_crypto_signal()` in orchestrator:
   - Binance OHLCV fetch → feature build → crypto XGBoost predict → size → gate → Telegram
   - Add crypto-specific features: funding_rate_8h, open_interest_change_1d, fear_greed_index
 - [ ] Train separate crypto XGBoost model on 2yr BTC/ETH/SOL daily data
 - [ ] Add `CryptoMetricsCollector`: fear/greed from Alternative.me, funding rates from Binance (both free)
 - [ ] Add `BinanceBrokerAdapter` skeleton (paper mode only; live crypto execution deferred)
-- [ ] Cross-asset correlation penalty: BTC/Nifty ~0.3 correlation → apply 0.1 size penalty on crypto when NSE positions open
+- [x] Cross-asset correlation penalty: BTC/Nifty ~0.3 correlation → apply 0.1 size penalty on crypto when NSE positions open
 
 Gate: BTC/ETH/SOL signals appear in Telegram with valid entry/stop/target. Backtested Sharpe > 0.5 on 2yr OOS.
 
 ### Phase 3 — Intelligence Upgrades (1-2 months)
 
-- [ ] **Options chain**: Parse NSE options chain via jugaad-data; compute PCR, IV skew, max pain daily
-- [ ] **LLM macro briefing**: Wire `LLMSentimentEngine.generate_macro_briefing()` — call once at 15:45 IST; prepend to first signal next morning
-- [ ] **NSE announcements**: Scrape via session cookie; FinBERT-score; suppress signal day before/after earnings
+- [x] **Options chain**: Parse NSE options chain via jugaad-data; compute PCR, IV skew, max pain daily (`data/options_scraper.py`)
+- [x] **LLM macro briefing**: Wire `LLMSentimentEngine.generate_macro_briefing()` — call once at 15:45 IST; prepend to first signal next morning
+- [x] **NSE announcements**: Scrape via session cookie; FinBERT-score; suppress signal day before/after earnings (`signals/filters.py`)
 - [ ] **Chronos cold-start**: Integrate for stocks with < 252 bars history (new IPOs, recent listings)
-- [ ] **Concept drift detection**: Daily KS-test on feature distribution vs training distribution; auto-trigger retrain if p < 0.05
-- [ ] **SHAP explanations**: Add top-3 feature drivers to each Telegram signal message
+- [x] **Concept drift detection**: Daily KS-test on feature distribution vs training distribution; auto-trigger retrain if p < 0.05 (`monitoring/drift_detector.py`)
+- [x] **SHAP explanations**: Add top-3 feature drivers to each Telegram signal message
 - [ ] **Walk-forward automation**: Cron retrain Sunday 02:00 IST; auto-promote to MLflow Production if Sharpe > 0.8
-- [ ] **F&O PCR signal**: PCR > 1.5 = bullish; PCR < 0.7 = bearish; include as regime confirmatory signal
+- [x] **F&O PCR signal**: PCR > 1.5 = bullish; PCR < 0.7 = bearish; include as regime confirmatory signal
 
 Gate: Daily macro briefing appears in Telegram. Earnings blackout filter active. SHAP top features show in signal messages.
 
 ### Phase 4 — Hardening (Ongoing)
 
-- [ ] Kill switch: `TRADING_ENABLED=false` env var halts all signal emission with zero code changes
-- [ ] Daily reconciliation: compare paper portfolio P&L vs actual price movements; alert if drift > 0.5%
+- [x] Kill switch: Redis `TRADING_KILL_SWITCH` key halts all signal emission at runtime; `TRADING_ENABLED=false` env var for deployment-time halt
+- [x] Daily reconciliation: compare paper portfolio P&L vs actual price movements; alert if drift > 0.5% (`monitoring/reconciliation.py`)
 - [ ] TimescaleDB automated backup to S3 (Backblaze B2: ~INR 50/month for 10GB)
-- [ ] Health check: alert to Telegram if system hasn't written to Redis in > 15min during market hours
+- [x] Health check: alert to Telegram if system hasn't written to Redis in > 15min during market hours (`monitoring/health.py`)
 - [ ] A/B test framework: route 20% of signals to TFT model; compare Sharpe over 3-month window
-- [ ] Position exit signals: add XGBoost exit model for partial profit taking before stop/target
+- [x] Position exit signals: add XGBoost exit model for partial profit taking before stop/target (`signals/exit_model.py`)
 
 ---
 

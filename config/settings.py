@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     # Default is the NSE:NIFTY 50 token on Zerodha Kite
     nifty50_token: int = 256265
 
+    # Feature flags
+    earnings_filter_enabled: bool = False
+
     @field_validator("max_position_pct")
     @classmethod
     def cap_position_pct(cls, v: float) -> float:

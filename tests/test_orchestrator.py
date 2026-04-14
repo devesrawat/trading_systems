@@ -354,3 +354,162 @@ class TestTradingScheduler:
             sched.start()
             sched.stop()
         mock_sched.shutdown.assert_called_once()
+
+    def test_equity_registers_health_check_job(self):
+        """Equity mode must register a health check job for stale heartbeat detection."""
+        with patch("orchestrator.scheduler.BackgroundScheduler") as mock_cls:
+            mock_sched = MagicMock()
+            mock_cls.return_value = mock_sched
+            system = _make_system()
+            sched = TradingScheduler(system, market_type="equity")
+            sched.start()
+        ids = [c[1].get("id") for c in mock_sched.add_job.call_args_list]
+        assert "equity_health_check" in ids
+
+    def test_equity_registers_fii_dii_job(self):
+        """Equity mode must register a FII/DII fetch job at 16:30 IST."""
+        with patch("orchestrator.scheduler.BackgroundScheduler") as mock_cls:
+            mock_sched = MagicMock()
+            mock_cls.return_value = mock_sched
+            system = _make_system()
+            sched = TradingScheduler(system, market_type="equity")
+            sched.start()
+        ids = [c[1].get("id") for c in mock_sched.add_job.call_args_list]
+        assert "equity_fii_dii_fetch" in ids
+
+
+# ---------------------------------------------------------------------------
+# Kill switch and both-mode regime fix
+# ---------------------------------------------------------------------------
+
+class TestKillSwitchAndRegimeFix:
+    """Tests for Redis kill switch and both-mode regime suppression fix."""
+
+    def _make_feature_df(self) -> pd.DataFrame:
+        from signals.features import FEATURE_COLUMNS
+        data = {col: [0.0] * 5 for col in FEATURE_COLUMNS}
+        data["close"] = [1500.0] * 5
+        data["realized_vol_20"] = [0.2] * 5
+        return pd.DataFrame(data)
+
+    def test_kill_switch_active_skips_trading(self):
+        """When Redis kill switch key is '1', trading_loop must return without executing."""
+        system = _make_system()
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = b"1"
+
+        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
+             patch("orchestrator.main.HealthMonitor"):
+            system.trading_loop()
+
+        system._executor.place_market_order.assert_not_called()
+
+    def test_kill_switch_inactive_allows_trading(self):
+        """When kill switch key is not '1', trading should proceed normally."""
+        system = _make_system(market_type="equity")
+        system._model = MagicMock()
+        system._model.is_healthy.return_value = True
+        system._model.predict.return_value = pd.Series([0.85])
+        system._equity_universe = ["RELIANCE"]
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None  # not set
+
+        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
+             patch("orchestrator.main.HealthMonitor"), \
+             patch.object(system, "_fetch_equity_features",
+                          return_value={"RELIANCE": self._make_feature_df()}), \
+             patch.object(system._logger, "log_signal"):
+            system.trading_loop()
+
+        system._executor.place_market_order.assert_called_once()
+
+    def test_heartbeat_written_even_when_circuit_halted(self):
+        """Heartbeat must be written in finally so it fires even on early returns."""
+        system = _make_system()
+        system._circuit_breaker.is_halted.return_value = True
+
+        mock_health = MagicMock()
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None  # kill switch off
+
+        with patch("orchestrator.main.HealthMonitor", return_value=mock_health), \
+             patch("orchestrator.main.get_redis", return_value=mock_redis):
+            system.trading_loop()
+
+        mock_health.write_heartbeat.assert_called_once()
+
+    def test_both_mode_choppy_regime_runs_crypto_not_equity(self):
+        """In 'both' mode, a choppy regime must suppress equity but still run crypto."""
+        from signals.regime import RegimeState
+        system = _make_system(market_type="both")
+        system._model = MagicMock()
+        system._model.is_healthy.return_value = True
+        system._crypto_model = None  # no crypto model — crypto cycle skips model check
+        system._crypto_universe = ["BTC"]
+
+        # Simulate CHOPPY regime
+        mock_regime = MagicMock()
+        mock_regime.state = RegimeState.CHOPPY
+        system._current_regime = mock_regime
+
+        mock_regime_detector = MagicMock()
+        mock_regime_detector.should_suppress_new_entries.return_value = True
+        system._regime_detector = mock_regime_detector
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None  # kill switch off
+
+        run_equity_called = []
+        run_crypto_called = []
+        original_equity = system._run_equity_cycle
+        original_crypto = system._run_crypto_cycle
+
+        def track_equity():
+            run_equity_called.append(True)
+        def track_crypto():
+            run_crypto_called.append(True)
+
+        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
+             patch("orchestrator.main.HealthMonitor"), \
+             patch.object(system, "_update_regime"), \
+             patch.object(system, "_run_equity_cycle", side_effect=track_equity), \
+             patch.object(system, "_run_crypto_cycle", side_effect=track_crypto):
+            system.trading_loop()
+
+        assert len(run_equity_called) == 0, "Equity cycle should be suppressed in choppy regime"
+        assert len(run_crypto_called) == 1, "Crypto cycle must still run in both-mode choppy regime"
+
+    def test_crypto_signal_skipped_when_no_model(self):
+        """_execute_crypto_signal must return immediately if no crypto model is available."""
+        system = _make_system(market_type="crypto")
+        system._crypto_model = None  # no model loaded
+
+        system._execute_crypto_signal("BTC")  # must not raise or place any order
+
+        system._executor.place_market_order.assert_not_called()
+
+    def test_buy_alert_sent_on_equity_buy_signal(self):
+        """When an equity BUY is executed, a Telegram alert with SHAP must be sent."""
+        system = _make_system(market_type="equity")
+        system._model = MagicMock()
+        system._model.is_healthy.return_value = True
+        system._model.predict.return_value = pd.Series([0.85])
+        system._model.explain.return_value = {"rsi_14": 0.15, "ema_ratio": -0.08, "vol": 0.05}
+        system._equity_universe = ["RELIANCE"]
+
+        mock_redis = MagicMock()
+        mock_redis.get.return_value = None
+
+        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
+             patch("orchestrator.main.HealthMonitor"), \
+             patch.object(system, "_fetch_equity_features",
+                          return_value={"RELIANCE": self._make_feature_df()}), \
+             patch.object(system._logger, "log_signal"), \
+             patch.object(system, "_send_alert") as mock_alert:
+            system.trading_loop()
+
+        # Should have been called at least once with a BUY message
+        calls = [str(c) for c in mock_alert.call_args_list]
+        assert any("BUY" in c or "SHAP" in c for c in calls), \
+            f"Expected a BUY alert with SHAP, got: {calls}"

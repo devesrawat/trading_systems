@@ -105,6 +105,29 @@ class TradingScheduler:
             replace_existing=True,
         )
 
+        # Health check — every 5 min during market hours (09:15–15:35 IST)
+        self._scheduler.add_job(
+            func=self._safe(self._health_check),
+            trigger=CronTrigger(
+                hour="9-15",
+                minute="15,20,25,30,35,40,45,50,55,0,5,10",
+                day_of_week="mon-fri",
+                timezone=_TZ_IST,
+            ),
+            id="equity_health_check",
+            name="Health monitor stale-heartbeat check (5-min)",
+            replace_existing=True,
+        )
+
+        # FII/DII data fetch — 16:30 IST (post-market data released by NSE)
+        self._scheduler.add_job(
+            func=self._safe(self._fetch_fii_dii),
+            trigger=CronTrigger(hour=16, minute=30, day_of_week="mon-fri", timezone=_TZ_IST),
+            id="equity_fii_dii_fetch",
+            name="FII/DII flows fetch (post-market)",
+            replace_existing=True,
+        )
+
     # ------------------------------------------------------------------
     # Crypto jobs  (UTC, 24/7)
     # ------------------------------------------------------------------
@@ -192,3 +215,21 @@ class TradingScheduler:
                     pass
         wrapper.__name__ = getattr(fn, "__name__", "unknown")
         return wrapper
+
+    def _health_check(self) -> None:
+        """Alert if the trading loop heartbeat is stale."""
+        from monitoring.health import HealthMonitor
+        HealthMonitor().send_alert_if_stale()
+
+    def _fetch_fii_dii(self) -> None:
+        """Fetch post-market FII/DII flows from NSE and cache in Redis."""
+        try:
+            from data.ingest import NSEDataScraper
+            from data.store import get_redis
+            flows = NSEDataScraper().get_fii_dii_flows()
+            if flows:
+                import json
+                get_redis().set("trading:fii_dii:latest", json.dumps(flows), ex=86400)
+                log.info("fii_dii_fetched", net_fii=flows.get("fii_net"))
+        except Exception as exc:
+            log.warning("fii_dii_fetch_failed", error=str(exc))

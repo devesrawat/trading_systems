@@ -141,6 +141,20 @@ class WalkForwardTrainer:
 
         return self._aggregate_results()
 
+    def save_drift_reference(self, df: pd.DataFrame, features: list[str]) -> None:
+        """
+        Save a random sample from *df* as the drift detection reference.
+
+        Call after run() to persist the training distribution. The reference
+        is used by ConceptDriftDetector.check() during post-market drift checks.
+        """
+        try:
+            from monitoring.drift_detector import ConceptDriftDetector
+            ConceptDriftDetector().fit(df, features)
+            log.info("drift_reference_saved_after_training")
+        except Exception as exc:
+            log.warning("drift_reference_save_failed", error=str(exc))
+
     def best_model(self) -> xgb.XGBClassifier:
         """Return the XGBoost model from the fold with highest out-of-sample AUC."""
         if not self._fold_results:

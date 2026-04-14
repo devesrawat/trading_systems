@@ -81,3 +81,27 @@ class RedisKeys:
     # ------------------------------------------------------------------
 
     CRYPTO_UNIVERSE: str = "trading:crypto:universe"
+
+    # ------------------------------------------------------------------
+    # Kill switch  (operator-set dynamic flag)
+    # ------------------------------------------------------------------
+
+    TRADING_KILL_SWITCH: str = "trading:control:kill_switch"
+
+    # ------------------------------------------------------------------
+    # System heartbeat  (written each trading_loop run)
+    # ------------------------------------------------------------------
+
+    SYSTEM_HEARTBEAT: str = "trading:health:heartbeat"
+
+    # ------------------------------------------------------------------
+    # LLM macro briefing  (written post-market, read next morning)
+    # ------------------------------------------------------------------
+
+    MACRO_BRIEFING: str = "trading:llm:macro_briefing"
+
+    # ------------------------------------------------------------------
+    # Concept drift reference features  (saved at training time)
+    # ------------------------------------------------------------------
+
+    DRIFT_REFERENCE: str = "trading:ml:drift_reference"

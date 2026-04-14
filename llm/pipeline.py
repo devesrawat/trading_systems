@@ -210,3 +210,96 @@ def _is_market_hours() -> bool:
         hour=_MARKET_CLOSE_HOUR, minute=_MARKET_CLOSE_MIN, second=0, microsecond=0
     )
     return open_time <= now_ist <= close_time
+
+
+# ---------------------------------------------------------------------------
+# LLM macro briefing
+# ---------------------------------------------------------------------------
+
+class LLMSentimentEngine:
+    """
+    Generates a daily macro market briefing using FinBERT + headline aggregation.
+
+    Combines market-wide news (indices, macro events, FII/DII data) into a
+    short briefing string, stored in Redis and prepended to the first signal
+    Telegram message of the next trading day.
+    """
+
+    def __init__(self) -> None:
+        self._scorer = FinBERTScorer()
+        self._rss = MoneycontrolRSS()
+
+    def generate_macro_briefing(self, market_symbols: list[str] | None = None) -> str:
+        """
+        Fetch broad market headlines, score aggregate sentiment, return briefing.
+
+        Args:
+            market_symbols: List of index symbols to aggregate (default: Nifty proxies).
+
+        Returns:
+            Multi-line string suitable for prepending to a Telegram message.
+        """
+        market_symbols = market_symbols or ["NIFTY", "BANKNIFTY", "SENSEX"]
+
+        try:
+            # Aggregate market headlines from RSS
+            raw_articles = self._rss.fetch("markets", max_items=20)
+            if not raw_articles:
+                return "📊 <b>Macro Briefing</b>\nNo headlines available."
+
+            today_str = datetime.utcnow().strftime("%Y-%m-%d")
+            headlines = [a.get("headline", a.get("title", "")) for a in raw_articles if a]
+            headlines = [h for h in headlines if h][:20]
+
+            if not headlines:
+                return "📊 <b>Macro Briefing</b>\nNo headlines available."
+
+            # Score aggregate sentiment across all market headlines
+            agg_score = self._scorer.score_aggregate_cached(
+                headlines,
+                symbol="MARKET",
+                date=today_str,
+            )
+
+            sentiment_label = (
+                "🟢 Positive" if agg_score > 0.15
+                else "🔴 Negative" if agg_score < -0.15
+                else "⚪ Neutral"
+            )
+
+            top_headlines = headlines[:3]
+            headline_str = "\n".join(f"  • {h[:80]}" for h in top_headlines)
+
+            briefing = (
+                f"📊 <b>Macro Briefing</b> ({today_str})\n"
+                f"Sentiment: {sentiment_label} ({agg_score:+.2f})\n"
+                f"Top stories:\n{headline_str}"
+            )
+
+            # Persist to Redis for next morning
+            try:
+                from data.redis_keys import RedisKeys
+                from data.store import get_redis
+                get_redis().set(RedisKeys.MACRO_BRIEFING, briefing, ex=86400)
+                log.info("macro_briefing_saved", score=round(agg_score, 3))
+            except Exception as exc:
+                log.warning("macro_briefing_persist_failed", error=str(exc))
+
+            return briefing
+
+        except Exception as exc:
+            log.error("macro_briefing_failed", error=str(exc))
+            return "📊 <b>Macro Briefing</b>\nUnavailable (generation error)."
+
+    @staticmethod
+    def get_cached_briefing() -> str | None:
+        """Retrieve the most recent macro briefing from Redis. Returns None if missing."""
+        try:
+            from data.redis_keys import RedisKeys
+            from data.store import get_redis
+            raw = get_redis().get(RedisKeys.MACRO_BRIEFING)
+            if raw:
+                return raw if isinstance(raw, str) else raw.decode()
+        except Exception:
+            pass
+        return None
