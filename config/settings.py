@@ -8,6 +8,7 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         case_sensitive=False,
+        extra="ignore",  # allow Docker-only vars (POSTGRES_*, GRAFANA_*) without failing
     )
 
     # Data provider selection: "kite" (default) | "upstox"
@@ -68,6 +69,16 @@ class Settings(BaseSettings):
     daily_dd_limit: float = 0.03
     weekly_dd_limit: float = 0.07
     paper_trade_mode: bool = True
+
+    # Crypto position limits
+    crypto_max_position_pct: float = 0.01
+    crypto_signal_threshold: float = 0.70
+    crypto_min_volume_usd: float = 1_000_000.0
+    coingecko_api_key: Optional[str] = None
+
+    # NSE Nifty 50 instrument token (for regime detection)
+    # Default is the NSE:NIFTY 50 token on Zerodha Kite
+    nifty50_token: int = 256265
 
     @field_validator("max_position_pct")
     @classmethod

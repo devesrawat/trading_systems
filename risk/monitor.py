@@ -154,6 +154,47 @@ class PortfolioMonitor:
         }
 
     # ------------------------------------------------------------------
+    # Convenience helpers (used by TelegramSignalBot and RiskGateway)
+    # ------------------------------------------------------------------
+
+    def get_current_heat(self) -> float:
+        """Gross exposure as a fraction of initial capital (0.0–1.0+)."""
+        gross = self.get_exposure()["gross_exposure"]
+        return gross / self._initial_capital if self._initial_capital > 0 else 0.0
+
+    def get_daily_drawdown(self) -> float:
+        """Daily drawdown fraction — convenience wrapper around get_drawdown()."""
+        return self.get_drawdown()["daily_dd"]
+
+    def get_open_positions(self) -> set[str]:
+        """Return the set of symbols with open positions."""
+        return set(self._positions.keys())
+
+    def get_open_positions_detail(self) -> dict[str, dict]:
+        """
+        Return per-symbol detail for the /portfolio Telegram command.
+
+        Returns
+        -------
+        dict[symbol, {qty, avg_price, current_price, unrealized_pnl_pct}]
+        """
+        result: dict[str, dict] = {}
+        for sym, pos in self._positions.items():
+            cost = pos["avg_price"] * pos["qty"]
+            pnl_pct = (
+                (pos["current_price"] - pos["avg_price"]) / pos["avg_price"]
+                if pos["avg_price"] > 0 else 0.0
+            )
+            result[sym] = {
+                "qty": pos["qty"],
+                "avg_price": pos["avg_price"],
+                "current_price": pos["current_price"],
+                "unrealized_pnl_pct": round(pnl_pct, 6),
+                "unrealized_pnl_inr": round(cost * pnl_pct, 2),
+            }
+        return result
+
+    # ------------------------------------------------------------------
     # Prometheus
     # ------------------------------------------------------------------
 

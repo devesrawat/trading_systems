@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from signals.features import FEATURE_COLUMNS, LABEL_COLUMNS, build_features
+from signals.features import AUXILIARY_FEATURE_COLUMNS, FEATURE_COLUMNS, LABEL_COLUMNS, build_features
 
 
 # ---------------------------------------------------------------------------
@@ -51,7 +51,9 @@ class TestBuildFeaturesContract:
     def test_no_nan_in_feature_columns(self):
         df = _make_ohlcv()
         result = build_features(df)
-        feature_cols = [c for c in result.columns if c not in LABEL_COLUMNS]
+        # Auxiliary columns and close are intentionally NaN when not provided
+        skip = set(LABEL_COLUMNS) | set(AUXILIARY_FEATURE_COLUMNS) | {"close"}
+        feature_cols = [c for c in result.columns if c not in skip]
         assert not result[feature_cols].isnull().any().any(), \
             f"NaN found in features: {result[feature_cols].isnull().sum()[result[feature_cols].isnull().any()]}"
 

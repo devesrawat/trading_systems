@@ -200,6 +200,7 @@ class TestTradingLoop:
         data = {col: [0.0] * 5 for col in FEATURE_COLUMNS}
         data["ema_50"] = [1500.0] * 5
         data["realized_vol_20"] = [0.2] * 5
+        data["close"] = [1500.0] * 5  # execution price pass-through
         return pd.DataFrame(data)
 
     def test_halted_circuit_breaker_skips_all_orders(self):

@@ -40,6 +40,9 @@ class CircuitBreaker:
         self._peak_capital: float = 0.0
         self._weekly_start_capital: float = 0.0
         self._consecutive_losses: int = 0
+        # Operator soft-pause (separate from risk-triggered halt)
+        self._operator_paused: bool = False
+        self._operator_pause_reason: str | None = None
 
         self._load_state()
 
@@ -114,7 +117,42 @@ class CircuitBreaker:
         self._write_circuit_event("halt", reason)
 
     def is_halted(self) -> bool:
-        return self._halted
+        return self._halted or self._operator_paused
+
+    def halt_reason(self) -> str | None:
+        """Return the reason the breaker was triggered, or None if not halted."""
+        if self._operator_paused:
+            return self._operator_pause_reason
+        return self._halt_reason if self._halted else None
+
+    def force_halt(self, reason: str) -> None:
+        """Alias for halt() — explicitly called by operator/Telegram."""
+        self.halt(reason)
+
+    def operator_pause(self, reason: str = "manual_operator_pause") -> None:
+        """
+        Soft-pause by an operator (e.g. via Telegram /pause).
+        Does NOT clear drawdown / risk state. Use manual_reset() for a
+        full risk reset (admin-only, never from Telegram).
+        """
+        self._operator_paused = True
+        self._operator_pause_reason = reason
+        self._persist_state()
+        self._write_circuit_event("operator_pause", reason=reason)
+        log.warning("circuit_operator_paused", reason=reason)
+
+    def operator_resume(self) -> None:
+        """
+        Lift an operator-pause. Only clears operator pause state —
+        genuine risk halts are NOT cleared here.
+        """
+        if not self._operator_paused:
+            return
+        self._operator_paused = False
+        self._operator_pause_reason = None
+        self._persist_state()
+        self._write_circuit_event("operator_resume")
+        log.warning("circuit_operator_resumed")
 
     # ------------------------------------------------------------------
     # Resets
@@ -209,6 +247,8 @@ class CircuitBreaker:
             "peak_capital": self._peak_capital,
             "weekly_start_capital": self._weekly_start_capital,
             "consecutive_losses": self._consecutive_losses,
+            "operator_paused": self._operator_paused,
+            "operator_pause_reason": self._operator_pause_reason,
         }
         get_redis().set(_REDIS_KEY, json.dumps(state))
 
@@ -224,7 +264,11 @@ class CircuitBreaker:
             self._peak_capital = float(state.get("peak_capital", 0.0))
             self._weekly_start_capital = float(state.get("weekly_start_capital", 0.0))
             self._consecutive_losses = int(state.get("consecutive_losses", 0))
+            self._operator_paused = bool(state.get("operator_paused", False))
+            self._operator_pause_reason = state.get("operator_pause_reason")
             if self._halted:
                 log.warning("circuit_breaker_loaded_halted", reason=self._halt_reason)
+            if self._operator_paused:
+                log.warning("circuit_operator_paused_on_load", reason=self._operator_pause_reason)
         except Exception as exc:
             log.error("circuit_state_load_failed", error=str(exc))

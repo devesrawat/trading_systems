@@ -193,3 +193,104 @@ class KiteIngestor:
     @property
     def kite(self) -> KiteConnect:
         return self._kite
+
+
+# ---------------------------------------------------------------------------
+# NSE market-data scraper (Phase 1 — M1 spec)
+# ---------------------------------------------------------------------------
+
+class NSEDataScraper:
+    """
+    Fetches NSE-specific data not available through broker APIs:
+    FII/DII daily flows, India VIX, NSE corporate announcements.
+
+    Uses NSE's undocumented JSON endpoints. A cookie-primed session is
+    established on first call and reused for all subsequent requests.
+    """
+
+    BASE = "https://www.nseindia.com"
+    _session: object | None = None
+
+    def _get_session(self):  # type: ignore[return]
+        import requests
+        if self._session is None:
+            s = requests.Session()
+            s.headers.update({
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36"
+                ),
+                "Accept-Language": "en-US,en;q=0.9",
+                "Referer": self.BASE,
+            })
+            s.get(self.BASE, timeout=10)  # establish cookies
+            self._session = s
+        return self._session
+
+    def get_fii_dii_flows(self) -> dict:
+        """
+        Returns latest FII/DII flow data.
+
+        Keys: fii_net_cash, dii_net_cash, fii_net_fno (all INR crore), date
+        """
+        session = self._get_session()
+        resp = session.get(f"{self.BASE}/api/fiidiiTradeReact", timeout=10)
+        resp.raise_for_status()
+        latest = resp.json()[0]
+        return {
+            "fii_net_cash": float(latest.get("netval_fii_cash", 0)),
+            "dii_net_cash": float(latest.get("netval_dii_cash", 0)),
+            "fii_net_fno": float(latest.get("netval_fii_fno", 0)),
+            "date": latest.get("date", ""),
+        }
+
+    def get_india_vix(self) -> float:
+        """Return current India VIX value."""
+        session = self._get_session()
+        resp = session.get(f"{self.BASE}/api/allIndices", timeout=10)
+        resp.raise_for_status()
+        for idx in resp.json().get("data", []):
+            if idx.get("indexSymbol") == "INDIA VIX":
+                return float(idx["last"])
+        raise ValueError("India VIX not found in NSE API response")
+
+
+# ---------------------------------------------------------------------------
+# Crypto metrics collector (Phase 1 — M1 spec)
+# ---------------------------------------------------------------------------
+
+class CryptoMetricsCollector:
+    """
+    Collects on-chain and derivatives metrics for BTC/ETH/SOL.
+
+    All endpoints are public / free-tier — no API key required.
+    """
+
+    FEAR_GREED_URL = "https://api.alternative.me/fng/"
+
+    def get_fear_greed(self) -> int:
+        """Return 0-100 Fear & Greed index. 0 = extreme fear, 100 = extreme greed."""
+        import requests
+        resp = requests.get(self.FEAR_GREED_URL, timeout=5)
+        return int(resp.json()["data"][0]["value"])
+
+    def get_binance_funding_rate(self, symbol: str) -> float:
+        """Return current 8-hour funding rate from Binance futures."""
+        import requests
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/fundingRate",
+            params={"symbol": f"{symbol}USDT", "limit": 1},
+            timeout=5,
+        )
+        data = resp.json()
+        return float(data[0]["fundingRate"]) if data else 0.0
+
+    def get_binance_open_interest(self, symbol: str) -> float:
+        """Return open interest in USDT from Binance futures."""
+        import requests
+        resp = requests.get(
+            "https://fapi.binance.com/fapi/v1/openInterest",
+            params={"symbol": f"{symbol}USDT"},
+            timeout=5,
+        )
+        return float(resp.json()["openInterest"])

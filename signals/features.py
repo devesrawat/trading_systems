@@ -51,6 +51,20 @@ FEATURE_COLUMNS: list[str] = [
 
 LABEL_COLUMNS: list[str] = ["forward_return_5d", "label"]
 
+# Auxiliary features added in Phase 1 — NOT yet part of FEATURE_COLUMNS because
+# existing production models were trained without them. Merge into FEATURE_COLUMNS
+# only after retraining on the augmented schema.
+#
+# build_features() appends these columns when the optional params are provided.
+# Callers that pass all four params get an enriched DataFrame; callers that omit
+# them get NaN-filled columns so downstream code can safely select either schema.
+AUXILIARY_FEATURE_COLUMNS: list[str] = [
+    "fii_net_cash_norm",  # FII net cash flow / 1e5 (normalised INR crore)
+    "india_vix",          # India VIX level
+    "sentiment_score",    # FinBERT sentiment for the symbol (-1..1)
+    "regime_code",        # RegimeState ordinal (0=TRENDING_BULL, …, 3=HIGH_VOL)
+]
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -59,6 +73,10 @@ LABEL_COLUMNS: list[str] = ["forward_return_5d", "label"]
 def build_features(
     df: pd.DataFrame,
     include_labels: bool = False,
+    fii_net_cash: float | None = None,
+    india_vix: float | None = None,
+    sentiment_score: float | None = None,
+    regime_code: int | None = None,
 ) -> pd.DataFrame:
     """
     Convert raw OHLCV DataFrame into the XGBoost feature vector.
@@ -71,11 +89,25 @@ def build_features(
     include_labels:
         If True, append forward_return_5d and label columns (training only).
         Must be False at inference time.
+    fii_net_cash:
+        FII net cash flow in INR crore (from NSEDataScraper). Normalised
+        internally to units of 1e5. Populates ``fii_net_cash_norm``.
+    india_vix:
+        India VIX level. Populates ``india_vix``.
+    sentiment_score:
+        FinBERT sentiment for this symbol in [-1, 1]. Populates
+        ``sentiment_score``.
+    regime_code:
+        Ordinal encoding of RegimeState (0=TRENDING_BULL, 1=TRENDING_BEAR,
+        2=CHOPPY, 3=HIGH_VOL). Populates ``regime_code``.
 
     Returns
     -------
     pd.DataFrame
         Feature matrix with DatetimeIndex preserved. NaN warm-up rows dropped.
+        Always includes ``close`` as a pass-through column for execution pricing.
+        Auxiliary columns (AUXILIARY_FEATURE_COLUMNS) are always present —
+        they contain NaN when the corresponding argument is not provided.
     """
     _validate_input(df)
 
@@ -173,6 +205,15 @@ def build_features(
     out["vol_regime"] = (out["realized_vol_20"] > median_vol).astype(int)
 
     # ------------------------------------------------------------------ #
+    # AUXILIARY FEATURES  (Phase 1 — kept separate from FEATURE_COLUMNS
+    # until models are retrained on the augmented schema)
+    # ------------------------------------------------------------------ #
+    out["fii_net_cash_norm"] = (fii_net_cash / 1e5) if fii_net_cash is not None else np.nan
+    out["india_vix"] = india_vix if india_vix is not None else np.nan
+    out["sentiment_score"] = sentiment_score if sentiment_score is not None else np.nan
+    out["regime_code"] = regime_code if regime_code is not None else np.nan
+
+    # ------------------------------------------------------------------ #
     # LABELS  (training only — never used at inference)
     # ------------------------------------------------------------------ #
     if include_labels:
@@ -181,10 +222,16 @@ def build_features(
         # Mask last 5 rows — no forward data available
         out.loc[out.index[-5:], ["forward_return_5d", "label"]] = np.nan
 
+    # Pass raw close through so callers can use it for execution pricing
+    # without requiring a separate OHLCV fetch. Not a feature — never in
+    # FEATURE_COLUMNS.
+    out["close"] = close
+
     # ------------------------------------------------------------------ #
-    # Drop NaN warm-up rows
+    # Drop NaN warm-up rows (only on core FEATURE_COLUMNS — auxiliary
+    # columns may legitimately be NaN when external data is unavailable)
     # ------------------------------------------------------------------ #
-    feature_cols = [c for c in out.columns if c not in LABEL_COLUMNS]
+    feature_cols = [c for c in out.columns if c not in LABEL_COLUMNS + AUXILIARY_FEATURE_COLUMNS + ["close"]]
     out = out.dropna(subset=feature_cols)
 
     log.debug("features_built", rows=len(out), cols=len(out.columns))

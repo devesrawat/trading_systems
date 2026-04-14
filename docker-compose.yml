@@ -1,4 +1,4 @@
-version: "3.8"
+# docker compose up -d --build
 
 # ---------------------------------------------------------------------------
 # Local dev compose — all services on one machine, ports exposed to host.
@@ -95,8 +95,6 @@ services:
     build: .
     command: python -m alembic upgrade head
     env_file: .env
-    environment:
-      TIMESCALE_URL: postgresql://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-password}@timescaledb:5432/${POSTGRES_DB:-nse_trading}
     depends_on:
       timescaledb:
         condition: service_healthy
@@ -110,10 +108,6 @@ services:
     command: python -m orchestrator.main
     restart: unless-stopped
     env_file: .env
-    environment:
-      TIMESCALE_URL: postgresql://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-password}@timescaledb:5432/${POSTGRES_DB:-nse_trading}
-      REDIS_URL: redis://redis:6379/0
-      MLFLOW_TRACKING_URI: http://mlflow:5000
     ports:
       - "8000:8000"   # Prometheus metrics endpoint (monitoring/grafana_exporter.py)
     depends_on:
@@ -134,10 +128,6 @@ services:
     command: python -m signals.scanner_engine
     restart: unless-stopped
     env_file: .env
-    environment:
-      TIMESCALE_URL: postgresql://${POSTGRES_USER:-trader}:${POSTGRES_PASSWORD:-password}@timescaledb:5432/${POSTGRES_DB:-nse_trading}
-      REDIS_URL: redis://redis:6379/0
-      MLFLOW_TRACKING_URI: http://mlflow:5000
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -156,8 +146,6 @@ services:
     command: python -m data.live_feed
     restart: unless-stopped
     env_file: .env
-    environment:
-      REDIS_URL: redis://redis:6379/0
     depends_on:
       redis:
         condition: service_healthy

@@ -398,6 +398,13 @@ def get_broker_adapter() -> BrokerAdapter:
         log.info("broker_adapter_upstox")
         return UpstoxBrokerAdapter(access_token=settings.upstox_access_token)
 
-    # binance / crypto / unknown — paper-only until live crypto execution is built
-    log.info("broker_adapter_paper_fallback", provider=provider, capital=settings.initial_capital)
-    return PaperBrokerAdapter(initial_capital=settings.initial_capital)
+    # binance falls through to paper (live crypto execution deferred)
+    if provider == "binance":
+        log.info("broker_adapter_paper_binance", capital=settings.initial_capital)
+        return PaperBrokerAdapter(initial_capital=settings.initial_capital)
+
+    raise ValueError(
+        f"Unknown data_provider: {provider!r}. "
+        "Valid values are 'kite', 'upstox', 'binance'. "
+        "Set PAPER_TRADE_MODE=true for development."
+    )

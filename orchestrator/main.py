@@ -40,6 +40,7 @@ from risk.monitor import PortfolioMonitor
 from risk.sizer import PositionSizer
 from signals.features import FEATURE_COLUMNS, build_features
 from signals.model import ModelRegistry, SignalModel
+from signals.vcp_scanner import scan_vcp_universe
 
 log = structlog.get_logger(__name__)
 
@@ -129,7 +130,13 @@ class TradingSystem:
         # ------------------------------------------------------------------
         self._equity_universe: list[str] = []
         self._crypto_universe: list[str] = []
+        self._vcp_candidates: list[dict] = []
         self._open_positions: set[str] = set()
+
+        # Regime detector — used in trading_loop to gate signal emission
+        from signals.regime import RegimeDetector
+        self._regime_detector = RegimeDetector()
+        self._current_regime = None
 
     # ------------------------------------------------------------------
     # Pre-market  (equity: 08:45 IST | crypto: called once at startup)
@@ -151,26 +158,36 @@ class TradingSystem:
         if self._market_type in ("crypto", "both"):
             self._load_crypto_universe()
 
-        # 3. Run sentiment for equity universe
+        # 3. Run VCP scan across equity universe (CPU-bound; results cached for the session)
+        if self._market_type in ("equity", "both") and self._equity_universe:
+            try:
+                self._vcp_candidates = scan_vcp_universe(self._equity_universe)
+                log.info("vcp_scan_complete", candidates=len(self._vcp_candidates))
+            except Exception as exc:
+                log.error("vcp_scan_failed", error=str(exc))
+                self._vcp_candidates = []
+
+        # 4. Run sentiment for equity universe
         if self._sentiment and self._equity_universe:
             try:
                 self._sentiment.run_daily(self._equity_universe)
             except Exception as exc:
                 log.error("sentiment_pre_market_failed", error=str(exc))
 
-        # 4. Load latest ML model from MLflow
+        # 5. Load latest ML model from MLflow
         self._load_model()
 
-        # 5. Reset daily circuit breaker
+        # 6. Reset daily circuit breaker
         capital = self._broker.get_balance() or settings.initial_capital
         self._circuit_breaker.reset_daily(current_capital=capital)
 
-        # 6. Telegram health check
+        # 7. Telegram health check
         self._send_alert(
             f"Pre-market OK | market={self._market_type} | "
             f"paper={settings.paper_trade_mode} | "
             f"capital={capital:,.0f} | "
-            f"model={'OK' if self._model else 'MISSING'}"
+            f"model={'OK' if self._model else 'MISSING'} | "
+            f"vcp_candidates={len(self._vcp_candidates)}"
         )
         log.info("pre_market_setup_complete")
 
@@ -192,6 +209,15 @@ class TradingSystem:
             return
 
         if self._market_type in ("equity", "both"):
+            self._update_regime()
+            if self._current_regime is not None and self._regime_detector.should_suppress_new_entries(
+                self._current_regime.state
+            ):
+                log.info(
+                    "trading_loop_skipped_choppy_regime",
+                    regime=self._current_regime.state.value,
+                )
+                return
             self._run_equity_cycle()
         if self._market_type in ("crypto", "both"):
             self._run_crypto_cycle()
@@ -332,10 +358,16 @@ class TradingSystem:
             if action == "SKIP" or self._circuit_breaker.is_halted():
                 return
 
-            current_price = float(last_row["ema_50"].iloc[0])
+            current_price = float(last_row["close"].iloc[0])
             vol = float(last_row.get("realized_vol_20", pd.Series([0.20])).iloc[0])
             capital = self._broker.get_balance() or settings.initial_capital
             size_inr = self._sizer.size(signal_prob, vol, capital)
+
+            # Apply regime size multiplier (only for equity; crypto ignores regime for now)
+            if asset_class == "equity" and self._current_regime is not None:
+                mult = self._regime_detector.get_position_size_multiplier(self._current_regime.state)
+                size_inr *= mult
+
             qty = self._sizer.shares(size_inr, current_price) if current_price > 0 else 0
 
             if qty <= 0:
@@ -387,6 +419,29 @@ class TradingSystem:
     # Internal — helpers
     # ------------------------------------------------------------------
 
+    def _update_regime(self) -> None:
+        """Detect current market regime using Nifty 50 data + India VIX."""
+        try:
+            from datetime import datetime, timedelta
+            from data.ingest import NSEDataScraper
+            nifty_token = settings.nifty50_token  # set in .env / settings
+            to_date = datetime.utcnow()
+            nifty_df = get_ohlcv(nifty_token, to_date - timedelta(days=400), to_date, interval="day")
+            if len(nifty_df) < 252:
+                log.warning("regime_update_insufficient_data", rows=len(nifty_df))
+                return
+            india_vix = NSEDataScraper().get_india_vix()
+            self._current_regime = self._regime_detector.detect(nifty_df, india_vix)
+            log.info(
+                "regime_updated",
+                state=self._current_regime.state.value,
+                adx=round(self._current_regime.adx_14, 1),
+                vix=round(self._current_regime.vix, 2),
+                score=round(self._current_regime.score, 2),
+            )
+        except Exception as exc:
+            log.warning("regime_update_failed", error=str(exc))
+
     def _load_model(self) -> None:
         try:
             self._model = self._registry.get_latest_model(segment="EQ")
@@ -399,7 +454,8 @@ class TradingSystem:
         from datetime import datetime, timedelta
         feature_map: dict[str, pd.DataFrame] = {}
         to_date = datetime.utcnow()
-        from_date = to_date - timedelta(days=90)
+        # 400 calendar days: ~280 trading days — enough for 252-bar warmup + signal rows
+        from_date = to_date - timedelta(days=400)
 
         instruments = get_universe(segment="EQ")
         for inst in instruments[:_TOP_N_EQUITY]:
