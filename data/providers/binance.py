@@ -34,13 +34,14 @@ Database storage reuses the existing ``ohlcv`` hypertable.  Because Binance
 has no integer instrument tokens, a deterministic 32-bit hash of the pair
 string is used in the ``token`` column so the primary-key constraint is met.
 """
+
 from __future__ import annotations
 
 import hashlib
 import json
 import threading
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any, Callable
 
 import pandas as pd
@@ -48,9 +49,8 @@ import requests
 import structlog
 
 from data.store import write_crypto_tick, write_ohlcv
-from data.redis_keys import RedisKeys
 
-from .base import OHLCVProvider, CANONICAL_INTERVALS
+from .base import CANONICAL_INTERVALS, OHLCVProvider
 
 log = structlog.get_logger(__name__)
 
@@ -59,13 +59,13 @@ _WS_BASE = "wss://stream.binance.com:9443/stream"
 
 # Canonical interval → Binance REST/WebSocket interval string
 _INTERVAL_MAP: dict[str, str] = {
-    "minute":   "1m",
-    "3minute":  "3m",
-    "5minute":  "5m",
+    "minute": "1m",
+    "3minute": "3m",
+    "5minute": "5m",
     "15minute": "15m",
     "30minute": "30m",
     "60minute": "1h",
-    "day":      "1d",
+    "day": "1d",
 }
 
 # Binance returns at most 1 000 candles per klines request
@@ -75,7 +75,7 @@ _MAX_BARS_PER_REQUEST = 1000
 _KLINES_WEIGHT = 2
 
 # Seconds to sleep when we approach the weight limit (conservative)
-_WEIGHT_SLEEP = 0.12   # ~8 calls/s → ~16 weight/s → well under 1 200/min
+_WEIGHT_SLEEP = 0.12  # ~8 calls/s → ~16 weight/s → well under 1 200/min
 
 
 def _symbol_hash(pair: str) -> int:
@@ -84,15 +84,15 @@ def _symbol_hash(pair: str) -> int:
     Uses the first 8 hex digits of the MD5 digest — deterministic, collision-free
     for any realistic crypto universe, and stays positive.
     """
-    return int(hashlib.md5(pair.upper().encode()).hexdigest()[:8], 16)
+    return int(hashlib.md5(pair.upper().encode(), usedforsecurity=False).hexdigest()[:8], 16)
 
 
 def _to_ms(dt: date | datetime) -> int:
     """Convert a :class:`date` or :class:`datetime` to a millisecond timestamp."""
     if isinstance(dt, datetime):
-        ts = dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+        ts = dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
         return int(ts.timestamp() * 1000)
-    return int(datetime(dt.year, dt.month, dt.day, tzinfo=timezone.utc).timestamp() * 1000)
+    return int(datetime(dt.year, dt.month, dt.day, tzinfo=UTC).timestamp() * 1000)
 
 
 class BinanceProvider(OHLCVProvider):
@@ -135,11 +135,13 @@ class BinanceProvider(OHLCVProvider):
 
         Example::
 
-            provider.register_instruments({
-                "BTC":    "BTCUSDT",
-                "ETH":    "ETHUSDT",
-                "SOL":    "SOLUSDT",
-            })
+            provider.register_instruments(
+                {
+                    "BTC": "BTCUSDT",
+                    "ETH": "ETHUSDT",
+                    "SOL": "SOLUSDT",
+                }
+            )
 
         Both the friendly name and the raw pair (``"BTCUSDT"``) can be used
         interchangeably in subsequent calls once registered.
@@ -158,8 +160,7 @@ class BinanceProvider(OHLCVProvider):
         pair = self._name_to_pair.get(symbol.upper())
         if pair is None:
             raise ValueError(
-                f"No Binance pair registered for '{symbol}'. "
-                "Call register_instruments() first."
+                f"No Binance pair registered for '{symbol}'. Call register_instruments() first."
             )
         return pair
 
@@ -199,11 +200,11 @@ class BinanceProvider(OHLCVProvider):
                 cursor=cursor_ms,
             )
             params: dict[str, Any] = {
-                "symbol":    pair,
-                "interval":  binance_interval,
+                "symbol": pair,
+                "interval": binance_interval,
                 "startTime": cursor_ms,
-                "endTime":   end_ms,
-                "limit":     _MAX_BARS_PER_REQUEST,
+                "endTime": end_ms,
+                "limit": _MAX_BARS_PER_REQUEST,
             }
             raw: list[list] = self._get("/klines", params)
             if not raw:
@@ -213,13 +214,13 @@ class BinanceProvider(OHLCVProvider):
             frames.append(df)
 
             # Advance cursor past the last candle's close time
-            last_close_ms: int = raw[-1][6]   # index 6 = close_time
+            last_close_ms: int = raw[-1][6]  # index 6 = close_time
             cursor_ms = last_close_ms + 1
 
             if len(raw) < _MAX_BARS_PER_REQUEST:
-                break   # Binance returned fewer than max → we have all the data
+                break  # Binance returned fewer than max → we have all the data
 
-            time.sleep(_WEIGHT_SLEEP)   # polite rate-limiting between pages
+            time.sleep(_WEIGHT_SLEEP)  # polite rate-limiting between pages
 
         if not frames:
             log.warning("binance_no_historical_data", symbol=symbol, interval=interval)
@@ -245,10 +246,10 @@ class BinanceProvider(OHLCVProvider):
         Each tick written to Redis has the shape::
 
             {
-                "symbol":        "BTCUSDT",
-                "last_price":    float,
-                "quantity":      float,
-                "timestamp":     int,   # ms since epoch
+                "symbol": "BTCUSDT",
+                "last_price": float,
+                "quantity": float,
+                "timestamp": int,  # ms since epoch
                 "is_buyer_maker": bool,
             }
 
@@ -256,7 +257,7 @@ class BinanceProvider(OHLCVProvider):
         Reconnects automatically every 5 s on error (handled by ``websocket``
         library's ``reconnect`` parameter).
         """
-        import websocket   # websocket-client — already in deps via kiteconnect
+        import websocket  # websocket-client — already in deps via kiteconnect
 
         pairs = [self._resolve_pair(s) for s in symbols]
         streams = "/".join(f"{p.lower()}@aggTrade" for p in pairs)
@@ -275,10 +276,10 @@ class BinanceProvider(OHLCVProvider):
                     return
 
                 tick: dict[str, Any] = {
-                    "symbol":         data["s"],
-                    "last_price":     float(data["p"]),
-                    "quantity":       float(data["q"]),
-                    "timestamp":      int(data["T"]),
+                    "symbol": data["s"],
+                    "last_price": float(data["p"]),
+                    "quantity": float(data["q"]),
+                    "timestamp": int(data["T"]),
                     "is_buyer_maker": bool(data["m"]),
                 }
                 write_crypto_tick(data["s"], tick)
@@ -330,8 +331,8 @@ class BinanceProvider(OHLCVProvider):
             pair = item["symbol"]
             name = self._pair_to_friendly.get(pair, pair)
             result[name] = {
-                "symbol":     name,
-                "pair":       pair,
+                "symbol": name,
+                "pair": pair,
                 "last_price": float(item["price"]),
             }
         return result
@@ -366,6 +367,7 @@ class BinanceProvider(OHLCVProvider):
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _klines_to_df(
     raw: list[list],
     symbol: str,
@@ -389,19 +391,33 @@ def _klines_to_df(
         10 taker_buy_quote_asset_volume
         11 ignore
     """
-    df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_volume", "trades",
-        "taker_buy_base", "taker_buy_quote", "ignore",
-    ])
+    df = pd.DataFrame(
+        raw,
+        columns=[
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time",
+            "quote_volume",
+            "trades",
+            "taker_buy_base",
+            "taker_buy_quote",
+            "ignore",
+        ],
+    )
     df["time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True)
-    df["open"]   = df["open"].astype(float)
-    df["high"]   = df["high"].astype(float)
-    df["low"]    = df["low"].astype(float)
-    df["close"]  = df["close"].astype(float)
+    df["open"] = df["open"].astype(float)
+    df["high"] = df["high"].astype(float)
+    df["low"] = df["low"].astype(float)
+    df["close"] = df["close"].astype(float)
     df["volume"] = df["volume"].astype(float)
-    df["token"]  = token
+    df["token"] = token
     df["symbol"] = symbol
     df["interval"] = interval
-    df = df.set_index("time")[["token", "symbol", "open", "high", "low", "close", "volume", "interval"]]
+    df = df.set_index("time")[
+        ["token", "symbol", "open", "high", "low", "close", "volume", "interval"]
+    ]
     return df

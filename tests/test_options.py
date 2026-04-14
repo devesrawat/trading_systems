@@ -1,7 +1,7 @@
 """Unit tests for options/ — TDD RED phase. No live Kite or market data required."""
+
 from __future__ import annotations
 
-import math
 from datetime import date, timedelta
 from unittest.mock import MagicMock, patch
 
@@ -9,22 +9,22 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from options.greeks import delta, gamma, theta, compute_portfolio_delta
+from options.greeks import compute_portfolio_delta, delta, gamma, theta
 from options.iv_features import (
-    compute_iv_rank,
-    compute_iv_percentile,
-    compute_realized_vol,
-    compute_max_pain,
     IVFeatures,
-    build_fo_features,
     _write_iv_snapshot,
+    build_fo_features,
+    compute_iv_percentile,
+    compute_iv_rank,
+    compute_max_pain,
+    compute_realized_vol,
 )
 from options.strategy import FoStrategyEngine, SignalType
-
 
 # ---------------------------------------------------------------------------
 # greeks.py
 # ---------------------------------------------------------------------------
+
 
 class TestDelta:
     """Black-Scholes delta: call ∈ (0,1), put ∈ (-1,0)."""
@@ -108,7 +108,7 @@ class TestComputePortfolioDelta:
     def test_long_call_short_put_near_zero_net_delta(self):
         # long call delta ~0.5 short put delta ~-0.5 → net ≈ 0
         positions = [
-            {"delta": 0.5, "qty": 1, "lot_size": 50},   # long call → +25
+            {"delta": 0.5, "qty": 1, "lot_size": 50},  # long call → +25
             {"delta": -0.5, "qty": -1, "lot_size": 50},  # short put (sold) → +25
         ]
         result = compute_portfolio_delta(positions)
@@ -119,6 +119,7 @@ class TestComputePortfolioDelta:
 # ---------------------------------------------------------------------------
 # iv_features.py
 # ---------------------------------------------------------------------------
+
 
 class TestComputeIVRank:
     def test_current_at_high_returns_one(self):
@@ -153,7 +154,7 @@ class TestComputeIVRank:
 
 class TestComputeIVPercentile:
     def test_current_above_all_historical(self):
-        iv_series = pd.Series(list(range(1, 252)) + [300])  # current=300 > all
+        iv_series = pd.Series([*range(1, 252), 300])  # current=300 > all
         pct = compute_iv_percentile(iv_series)
         assert pct >= 99.0
 
@@ -161,7 +162,7 @@ class TestComputeIVPercentile:
         iv_series = pd.Series(range(1, 101))  # 1..100, current=100
         # 100 is above all 1-99 → ~100th pct
         # use midpoint
-        iv_mid = pd.Series(list(range(0, 100)) + [50])  # current=50
+        iv_mid = pd.Series([*range(100), 50])  # current=50
         pct = compute_iv_percentile(iv_mid)
         assert 40.0 <= pct <= 60.0
 
@@ -234,8 +235,14 @@ class TestIVFeatures:
             realized_vol=0.21,
         )
         d = f.to_dict()
-        for key in ("iv_rank", "iv_percentile", "iv_premium", "put_call_ratio",
-                    "max_pain", "days_to_expiry"):
+        for key in (
+            "iv_rank",
+            "iv_percentile",
+            "iv_premium",
+            "put_call_ratio",
+            "max_pain",
+            "days_to_expiry",
+        ):
             assert key in d
 
 
@@ -245,8 +252,10 @@ class TestBuildFoFeatures:
     def _mock_kite(self):
         kite = MagicMock()
         # iv_history: 252 daily data points with 'iv' column
-        iv_data = [{"date": f"2024-{i//30+1:02d}-{(i%30)+1:02d}", "iv": 0.15 + i * 0.001}
-                   for i in range(252)]
+        iv_data = [
+            {"date": f"2024-{i // 30 + 1:02d}-{(i % 30) + 1:02d}", "iv": 0.15 + i * 0.001}
+            for i in range(252)
+        ]
         kite.historical_data.return_value = iv_data
         # option chain data
         kite.ltp.return_value = {
@@ -256,10 +265,12 @@ class TestBuildFoFeatures:
 
     def test_returns_ivfeatures_object(self):
         kite = self._mock_kite()
-        with patch("options.iv_features._fetch_iv_history") as mock_iv, \
-             patch("options.iv_features._fetch_option_chain") as mock_oc, \
-             patch("options.iv_features._fetch_underlying_prices") as mock_ul, \
-             patch("options.iv_features._write_iv_snapshot"):
+        with (
+            patch("options.iv_features._fetch_iv_history") as mock_iv,
+            patch("options.iv_features._fetch_option_chain") as mock_oc,
+            patch("options.iv_features._fetch_underlying_prices") as mock_ul,
+            patch("options.iv_features._write_iv_snapshot"),
+        ):
             mock_iv.return_value = pd.Series([0.15 + i * 0.001 for i in range(252)])
             mock_oc.return_value = (
                 {22000: 500, 22050: 300},  # call_oi
@@ -274,10 +285,12 @@ class TestBuildFoFeatures:
 
     def test_build_fo_features_persists_snapshot(self):
         kite = self._mock_kite()
-        with patch("options.iv_features._fetch_iv_history") as mock_iv, \
-             patch("options.iv_features._fetch_option_chain") as mock_oc, \
-             patch("options.iv_features._fetch_underlying_prices") as mock_ul, \
-             patch("options.iv_features._write_iv_snapshot") as mock_write:
+        with (
+            patch("options.iv_features._fetch_iv_history") as mock_iv,
+            patch("options.iv_features._fetch_option_chain") as mock_oc,
+            patch("options.iv_features._fetch_underlying_prices") as mock_ul,
+            patch("options.iv_features._write_iv_snapshot") as mock_write,
+        ):
             mock_iv.return_value = pd.Series([0.20 + i * 0.001 for i in range(252)])
             mock_oc.return_value = ({22000: 400}, {22000: 500})
             mock_ul.return_value = pd.Series([22000.0 + i for i in range(30)])
@@ -288,6 +301,7 @@ class TestBuildFoFeatures:
 # ---------------------------------------------------------------------------
 # strategy.py
 # ---------------------------------------------------------------------------
+
 
 class TestFoStrategyEngine:
     def _engine(self, max_positions: int = 3) -> FoStrategyEngine:
@@ -389,6 +403,7 @@ class TestFoStrategyEngine:
 # ---------------------------------------------------------------------------
 # _write_iv_snapshot (DB persistence)
 # ---------------------------------------------------------------------------
+
 
 class TestWriteIvSnapshot:
     def _sample_features(self) -> IVFeatures:

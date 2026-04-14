@@ -13,6 +13,7 @@ To run the bot as a long-lived process alongside the main orchestrator::
 
 Required env vars: TELEGRAM_BOT_TOKEN, TELEGRAM_CHANNEL_ID
 """
+
 from __future__ import annotations
 
 import os
@@ -49,10 +50,7 @@ class TelegramSignalBot:
 
     async def send_signal_alert(self, symbol: str, prob: float, qty: int, price: float) -> None:
         """Send a signal notification to the configured Telegram channel."""
-        text = (
-            f"🟢 BUY {symbol}\n"
-            f"Conf: {prob:.0%} | Qty: {qty} | Price: ₹{price:,.2f}"
-        )
+        text = f"🟢 BUY {symbol}\nConf: {prob:.0%} | Qty: {qty} | Price: ₹{price:,.2f}"
         await self._bot.send_message(chat_id=self._channel_id, text=text)
 
     async def send_halt_alert(self, reason: str) -> None:
@@ -133,6 +131,7 @@ class TelegramSignalBot:
 # ---------------------------------------------------------------------------
 # Standalone runner
 # ---------------------------------------------------------------------------
+
 
 def main() -> None:
     """Run the Telegram bot as a standalone polling process."""

@@ -4,6 +4,7 @@ TimescaleDB and Redis read/write helpers.
 Schema is managed via Alembic migrations (see migrations/).
 Run `alembic upgrade head` or call `init_schema()` to apply all pending migrations.
 """
+
 from __future__ import annotations
 
 import json
@@ -40,8 +41,8 @@ def get_engine() -> Engine:
         _engine = create_engine(
             settings.timescale_url,
             poolclass=QueuePool,
-            pool_size=10,       # raised from 5 — bulk_ingest uses up to 6 threads
-            max_overflow=20,    # raised from 10 — scanner fan-out needs headroom
+            pool_size=10,  # raised from 5 — bulk_ingest uses up to 6 threads
+            max_overflow=20,  # raised from 10 — scanner fan-out needs headroom
             pool_pre_ping=True,
         )
         log.info("db_engine_created", url=settings.timescale_url)
@@ -59,6 +60,7 @@ def get_redis() -> redis_lib.Redis:
 # ---------------------------------------------------------------------------
 # Schema initialisation
 # ---------------------------------------------------------------------------
+
 
 def init_schema() -> None:
     """Apply all pending Alembic migrations. Safe to call multiple times."""
@@ -114,7 +116,12 @@ def get_ohlcv(
         df = pd.read_sql(
             query,
             conn,
-            params={"token": token, "interval": interval, "from_date": from_date, "to_date": to_date},
+            params={
+                "token": token,
+                "interval": interval,
+                "from_date": from_date,
+                "to_date": to_date,
+            },
             parse_dates=["time"],
             index_col="time",
         )
@@ -141,7 +148,12 @@ def get_ohlcv_batch(
         df = pd.read_sql(
             _OHLCV_BATCH_QUERY,
             conn,
-            params={"tokens": list(tokens), "interval": interval, "from_date": from_date, "to_date": to_date},
+            params={
+                "tokens": list(tokens),
+                "interval": interval,
+                "from_date": from_date,
+                "to_date": to_date,
+            },
             parse_dates=["time"],
         )
     result: dict[int, pd.DataFrame] = {}
@@ -208,7 +220,7 @@ def write_tick(token: int, tick: dict[str, Any]) -> None:
 # Crypto tick cache  (separate namespace from NSE integer tokens)
 # ---------------------------------------------------------------------------
 
-_CRYPTO_TICK_TTL_SECONDS = 10   # crypto markets are 24/7; slightly longer TTL than NSE
+_CRYPTO_TICK_TTL_SECONDS = 10  # crypto markets are 24/7; slightly longer TTL than NSE
 
 
 def get_latest_crypto_tick(symbol: str) -> dict[str, Any] | None:
@@ -256,6 +268,7 @@ def get_universe(segment: str = "EQ") -> list[dict[str, Any]]:
 
 if __name__ == "__main__":
     import sys
+
     if "--init-schema" in sys.argv:
         init_schema()
         print("Schema initialised successfully.")

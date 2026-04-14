@@ -1,17 +1,16 @@
 """Unit tests for orchestrator/ — mocks all external dependencies."""
-import sys
+
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from orchestrator.main import TradingSystem
 from orchestrator.scheduler import TradingScheduler
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _mock_broker(paper: bool = True) -> MagicMock:
     b = MagicMock()
@@ -68,17 +67,19 @@ def _make_system(market_type: str = "equity", **settings_overrides) -> TradingSy
     mock_equity_provider = MagicMock()
     mock_crypto_provider = MagicMock()
 
-    with patch("orchestrator.main.settings", mock_settings), \
-         patch("orchestrator.main.get_provider", return_value=mock_equity_provider), \
-         patch("orchestrator.main.get_crypto_provider", return_value=mock_crypto_provider), \
-         patch("orchestrator.main.get_broker_adapter", return_value=mock_broker), \
-         patch("orchestrator.main.CircuitBreaker", return_value=mock_cb), \
-         patch("orchestrator.main.PositionSizer", return_value=mock_sizer), \
-         patch("orchestrator.main.OrderExecutor", return_value=mock_executor), \
-         patch("orchestrator.main.TradeLogger", return_value=MagicMock()), \
-         patch("orchestrator.main.PortfolioMonitor", return_value=mock_monitor), \
-         patch("orchestrator.main.ModelRegistry", return_value=mock_registry), \
-         patch("llm.pipeline.SentimentPipeline", return_value=mock_sentiment):
+    with (
+        patch("orchestrator.main.settings", mock_settings),
+        patch("orchestrator.main.get_provider", return_value=mock_equity_provider),
+        patch("orchestrator.main.get_crypto_provider", return_value=mock_crypto_provider),
+        patch("orchestrator.main.get_broker_adapter", return_value=mock_broker),
+        patch("orchestrator.main.CircuitBreaker", return_value=mock_cb),
+        patch("orchestrator.main.PositionSizer", return_value=mock_sizer),
+        patch("orchestrator.main.OrderExecutor", return_value=mock_executor),
+        patch("orchestrator.main.TradeLogger", return_value=MagicMock()),
+        patch("orchestrator.main.PortfolioMonitor", return_value=mock_monitor),
+        patch("orchestrator.main.ModelRegistry", return_value=mock_registry),
+        patch("llm.pipeline.SentimentPipeline", return_value=mock_sentiment),
+    ):
         system = TradingSystem(market_type=market_type)
 
     # Inject the pre-built mocks so tests can assert on them
@@ -96,6 +97,7 @@ def _make_system(market_type: str = "equity", **settings_overrides) -> TradingSy
 # ---------------------------------------------------------------------------
 # TradingSystem — initialisation
 # ---------------------------------------------------------------------------
+
 
 class TestTradingSystemInit:
     def test_creates_without_error(self):
@@ -138,19 +140,21 @@ class TestTradingSystemInit:
 # pre_market_setup
 # ---------------------------------------------------------------------------
 
+
 class TestPreMarketSetup:
     def test_resets_daily_circuit_breaker(self):
         system = _make_system()
-        with patch.object(system, "_load_equity_universe"), \
-             patch.object(system, "_load_model"), \
-             patch.object(system, "_send_alert"):
+        with (
+            patch.object(system, "_load_equity_universe"),
+            patch.object(system, "_load_model"),
+            patch.object(system, "_send_alert"),
+        ):
             system.pre_market_setup()
         system._circuit_breaker.reset_daily.assert_called_once()
 
     def test_loads_model_from_registry(self):
         system = _make_system()
-        with patch.object(system, "_load_equity_universe"), \
-             patch.object(system, "_send_alert"):
+        with patch.object(system, "_load_equity_universe"), patch.object(system, "_send_alert"):
             system.pre_market_setup()
         # _load_model calls registry.get_latest_model
         system._registry.get_latest_model.assert_called()
@@ -158,9 +162,11 @@ class TestPreMarketSetup:
     def test_runs_sentiment_for_equity_universe(self):
         system = _make_system(market_type="equity")
         system._equity_universe = ["RELIANCE", "TCS"]
-        with patch.object(system, "_load_equity_universe"), \
-             patch.object(system, "_load_model"), \
-             patch.object(system, "_send_alert"):
+        with (
+            patch.object(system, "_load_equity_universe"),
+            patch.object(system, "_load_model"),
+            patch.object(system, "_send_alert"),
+        ):
             system.pre_market_setup()
         system._sentiment.run_daily.assert_called_once()
 
@@ -168,36 +174,44 @@ class TestPreMarketSetup:
         system = _make_system(market_type="equity")
         system._equity_universe = ["RELIANCE"]
         system._sentiment.run_daily.side_effect = Exception("API timeout")
-        with patch.object(system, "_load_equity_universe"), \
-             patch.object(system, "_load_model"), \
-             patch.object(system, "_send_alert"):
-            system.pre_market_setup()   # must not raise
+        with (
+            patch.object(system, "_load_equity_universe"),
+            patch.object(system, "_load_model"),
+            patch.object(system, "_send_alert"),
+        ):
+            system.pre_market_setup()  # must not raise
 
     def test_broker_auth_refresh_called(self):
         system = _make_system()
-        with patch.object(system, "_load_equity_universe"), \
-             patch.object(system, "_load_model"), \
-             patch.object(system, "_send_alert"):
+        with (
+            patch.object(system, "_load_equity_universe"),
+            patch.object(system, "_load_model"),
+            patch.object(system, "_send_alert"),
+        ):
             system.pre_market_setup()
         system._broker.refresh_auth.assert_called_once()
 
     def test_auth_failure_does_not_crash(self):
         system = _make_system()
         system._broker.refresh_auth.side_effect = Exception("Token expired")
-        with patch.object(system, "_load_equity_universe"), \
-             patch.object(system, "_load_model"), \
-             patch.object(system, "_send_alert"):
-            system.pre_market_setup()   # must not raise
+        with (
+            patch.object(system, "_load_equity_universe"),
+            patch.object(system, "_load_model"),
+            patch.object(system, "_send_alert"),
+        ):
+            system.pre_market_setup()  # must not raise
 
 
 # ---------------------------------------------------------------------------
 # trading_loop
 # ---------------------------------------------------------------------------
 
+
 class TestTradingLoop:
     def _make_feature_df(self) -> pd.DataFrame:
         """Minimal feature DataFrame the loop can operate on."""
         from signals.features import FEATURE_COLUMNS
+
         data = {col: [0.0] * 5 for col in FEATURE_COLUMNS}
         data["ema_50"] = [1500.0] * 5
         data["realized_vol_20"] = [0.2] * 5
@@ -240,9 +254,12 @@ class TestTradingLoop:
         system._model.predict.return_value = pd.Series([0.40])
         system._equity_universe = ["RELIANCE"]
 
-        with patch.object(system, "_fetch_equity_features",
-                          return_value={"RELIANCE": self._make_feature_df()}), \
-             patch.object(system, "_logger"):
+        with (
+            patch.object(
+                system, "_fetch_equity_features", return_value={"RELIANCE": self._make_feature_df()}
+            ),
+            patch.object(system, "_logger"),
+        ):
             system.trading_loop()
         system._executor.place_market_order.assert_not_called()
 
@@ -253,9 +270,12 @@ class TestTradingLoop:
         system._model.predict.return_value = pd.Series([0.80])
         system._equity_universe = ["RELIANCE"]
 
-        with patch.object(system, "_fetch_equity_features",
-                          return_value={"RELIANCE": self._make_feature_df()}), \
-             patch.object(system._logger, "log_signal"):
+        with (
+            patch.object(
+                system, "_fetch_equity_features", return_value={"RELIANCE": self._make_feature_df()}
+            ),
+            patch.object(system._logger, "log_signal"),
+        ):
             system.trading_loop()
         system._executor.place_market_order.assert_called_once()
 
@@ -268,8 +288,9 @@ class TestTradingLoop:
         system._equity_universe = ["RELIANCE"]
         system._open_positions.add("RELIANCE")
 
-        with patch.object(system, "_fetch_equity_features",
-                          return_value={"RELIANCE": self._make_feature_df()}):
+        with patch.object(
+            system, "_fetch_equity_features", return_value={"RELIANCE": self._make_feature_df()}
+        ):
             system.trading_loop()
         system._executor.place_market_order.assert_not_called()
 
@@ -277,6 +298,7 @@ class TestTradingLoop:
 # ---------------------------------------------------------------------------
 # post_market_summary
 # ---------------------------------------------------------------------------
+
 
 class TestPostMarketSummary:
     def test_calls_daily_summary(self):
@@ -301,12 +323,13 @@ class TestPostMarketSummary:
     def test_post_market_error_does_not_crash(self):
         system = _make_system()
         system._logger.daily_summary.side_effect = Exception("DB error")
-        system.post_market_summary()   # must not raise
+        system.post_market_summary()  # must not raise
 
 
 # ---------------------------------------------------------------------------
 # TradingScheduler (via orchestrator.scheduler)
 # ---------------------------------------------------------------------------
+
 
 class TestTradingScheduler:
     def test_scheduler_creates_without_error(self):
@@ -383,11 +406,13 @@ class TestTradingScheduler:
 # Kill switch and both-mode regime fix
 # ---------------------------------------------------------------------------
 
+
 class TestKillSwitchAndRegimeFix:
     """Tests for Redis kill switch and both-mode regime suppression fix."""
 
     def _make_feature_df(self) -> pd.DataFrame:
         from signals.features import FEATURE_COLUMNS
+
         data = {col: [0.0] * 5 for col in FEATURE_COLUMNS}
         data["close"] = [1500.0] * 5
         data["realized_vol_20"] = [0.2] * 5
@@ -399,8 +424,10 @@ class TestKillSwitchAndRegimeFix:
         mock_redis = MagicMock()
         mock_redis.get.return_value = b"1"
 
-        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
-             patch("orchestrator.main.HealthMonitor"):
+        with (
+            patch("orchestrator.main.get_redis", return_value=mock_redis),
+            patch("orchestrator.main.HealthMonitor"),
+        ):
             system.trading_loop()
 
         system._executor.place_market_order.assert_not_called()
@@ -416,11 +443,14 @@ class TestKillSwitchAndRegimeFix:
         mock_redis = MagicMock()
         mock_redis.get.return_value = None  # not set
 
-        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
-             patch("orchestrator.main.HealthMonitor"), \
-             patch.object(system, "_fetch_equity_features",
-                          return_value={"RELIANCE": self._make_feature_df()}), \
-             patch.object(system._logger, "log_signal"):
+        with (
+            patch("orchestrator.main.get_redis", return_value=mock_redis),
+            patch("orchestrator.main.HealthMonitor"),
+            patch.object(
+                system, "_fetch_equity_features", return_value={"RELIANCE": self._make_feature_df()}
+            ),
+            patch.object(system._logger, "log_signal"),
+        ):
             system.trading_loop()
 
         system._executor.place_market_order.assert_called_once()
@@ -434,8 +464,10 @@ class TestKillSwitchAndRegimeFix:
         mock_redis = MagicMock()
         mock_redis.get.return_value = None  # kill switch off
 
-        with patch("orchestrator.main.HealthMonitor", return_value=mock_health), \
-             patch("orchestrator.main.get_redis", return_value=mock_redis):
+        with (
+            patch("orchestrator.main.HealthMonitor", return_value=mock_health),
+            patch("orchestrator.main.get_redis", return_value=mock_redis),
+        ):
             system.trading_loop()
 
         mock_health.write_heartbeat.assert_called_once()
@@ -443,6 +475,7 @@ class TestKillSwitchAndRegimeFix:
     def test_both_mode_choppy_regime_runs_crypto_not_equity(self):
         """In 'both' mode, a choppy regime must suppress equity but still run crypto."""
         from signals.regime import RegimeState
+
         system = _make_system(market_type="both")
         system._model = MagicMock()
         system._model.is_healthy.return_value = True
@@ -468,14 +501,17 @@ class TestKillSwitchAndRegimeFix:
 
         def track_equity():
             run_equity_called.append(True)
+
         def track_crypto():
             run_crypto_called.append(True)
 
-        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
-             patch("orchestrator.main.HealthMonitor"), \
-             patch.object(system, "_update_regime"), \
-             patch.object(system, "_run_equity_cycle", side_effect=track_equity), \
-             patch.object(system, "_run_crypto_cycle", side_effect=track_crypto):
+        with (
+            patch("orchestrator.main.get_redis", return_value=mock_redis),
+            patch("orchestrator.main.HealthMonitor"),
+            patch.object(system, "_update_regime"),
+            patch.object(system, "_run_equity_cycle", side_effect=track_equity),
+            patch.object(system, "_run_crypto_cycle", side_effect=track_crypto),
+        ):
             system.trading_loop()
 
         assert len(run_equity_called) == 0, "Equity cycle should be suppressed in choppy regime"
@@ -502,15 +538,19 @@ class TestKillSwitchAndRegimeFix:
         mock_redis = MagicMock()
         mock_redis.get.return_value = None
 
-        with patch("orchestrator.main.get_redis", return_value=mock_redis), \
-             patch("orchestrator.main.HealthMonitor"), \
-             patch.object(system, "_fetch_equity_features",
-                          return_value={"RELIANCE": self._make_feature_df()}), \
-             patch.object(system._logger, "log_signal"), \
-             patch.object(system, "_send_alert") as mock_alert:
+        with (
+            patch("orchestrator.main.get_redis", return_value=mock_redis),
+            patch("orchestrator.main.HealthMonitor"),
+            patch.object(
+                system, "_fetch_equity_features", return_value={"RELIANCE": self._make_feature_df()}
+            ),
+            patch.object(system._logger, "log_signal"),
+            patch.object(system, "_send_alert") as mock_alert,
+        ):
             system.trading_loop()
 
         # Should have been called at least once with a BUY message
         calls = [str(c) for c in mock_alert.call_args_list]
-        assert any("BUY" in c or "SHAP" in c for c in calls), \
+        assert any("BUY" in c or "SHAP" in c for c in calls), (
             f"Expected a BUY alert with SHAP, got: {calls}"
+        )

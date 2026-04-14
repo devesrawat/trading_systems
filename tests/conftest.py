@@ -2,6 +2,7 @@
 Pytest configuration — injects minimal env vars so pydantic Settings
 can be imported in all tests without a real .env file.
 """
+
 import os
 
 # Set required fields before any module imports trigger Settings()

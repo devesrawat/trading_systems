@@ -41,7 +41,7 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 
 ## Architecture
 
-- Signal engine: Python 3.11, async, FastAPI for internal APIs
+- Signal engine: Python 3.13, async, FastAPI for internal APIs
 - Data: Redis (cache) + TimescaleDB (OHLCV) + SQLite (signals log)
 - Broker API: Zerodha Kite (Indian equities + F&O), Binance WS (crypto)
 - ML: LightGBM primary, PatchTST for experimental. Models in ./models/
@@ -49,9 +49,16 @@ Fall back to Grep/Glob/Read **only** when the graph doesn't cover what you need.
 
 ## Commands to run before committing
 
-pytest tests/ -x -q
-ruff check . --fix
-mypy src/ --strict
+```bash
+uv run pytest tests/ -x -q --no-cov
+uv run ruff format .
+uv run ruff check . --fix
+uv run mypy data/ signals/ orchestrator/ execution/ risk/ monitoring/ llm/ backtest/ options/
+uv run bandit -c pyproject.toml -r .
+uv run pip-audit
+```
+
+Pre-commit hooks run ruff + bandit on every commit automatically (after `uv run pre-commit install`).
 
 ## Key conventions
 

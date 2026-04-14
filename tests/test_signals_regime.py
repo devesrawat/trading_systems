@@ -1,6 +1,4 @@
 """Unit tests for signals/regime.py — TDD RED phase."""
-import tempfile
-from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -8,10 +6,10 @@ import pytest
 
 from signals.regime import SimpleVolRegime, VolRegimeDetector
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_returns(n: int = 500, seed: int = 42) -> pd.Series:
     rng = np.random.default_rng(seed)
@@ -42,6 +40,7 @@ def _make_ohlcv(n: int = 300) -> pd.DataFrame:
 # SimpleVolRegime
 # ---------------------------------------------------------------------------
 
+
 class TestSimpleVolRegime:
     def test_classify_returns_valid_label(self):
         df = _make_ohlcv()
@@ -54,7 +53,9 @@ class TestSimpleVolRegime:
         df = _make_ohlcv(100)
         # Multiply recent vol by 10x
         df_high = df.copy()
-        df_high["close"] = df_high["close"] * (1 + np.random.default_rng(1).normal(0, 0.05, 100).cumsum())
+        df_high["close"] = df_high["close"] * (
+            1 + np.random.default_rng(1).normal(0, 0.05, 100).cumsum()
+        )
         df_high["close"] = df_high["close"].abs()
         svr = SimpleVolRegime(multiplier=0.5)  # low threshold → easier to trigger high_vol
         label = svr.classify(df_high)
@@ -89,6 +90,7 @@ class TestSimpleVolRegime:
 # ---------------------------------------------------------------------------
 # VolRegimeDetector (HMM)
 # ---------------------------------------------------------------------------
+
 
 class TestVolRegimeDetector:
     def test_fit_runs_without_error(self):

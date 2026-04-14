@@ -1,6 +1,5 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import field_validator
-from typing import Optional
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -17,12 +16,12 @@ class Settings(BaseSettings):
     # Zerodha Kite
     kite_api_key: str = ""
     kite_api_secret: str = ""
-    kite_access_token: Optional[str] = None
+    kite_access_token: str | None = None
 
     # Upstox v2
-    upstox_api_key: Optional[str] = None
-    upstox_api_secret: Optional[str] = None
-    upstox_access_token: Optional[str] = None
+    upstox_api_key: str | None = None
+    upstox_api_secret: str | None = None
+    upstox_access_token: str | None = None
     upstox_redirect_uri: str = "http://localhost:8080"
 
     # Database
@@ -30,32 +29,32 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379/0"
 
     # News APIs — equities
-    finnhub_api_key: Optional[str] = None
-    newsapi_key: Optional[str] = None
+    finnhub_api_key: str | None = None
+    newsapi_key: str | None = None
 
     # Crypto data providers (all free-tier)
-    binance_api_key: Optional[str] = None     # optional — only needed for order placement
-    binance_api_secret: Optional[str] = None  # optional — public market data needs no key
-    coingecko_api_key: Optional[str] = None   # optional free key → 50 req/min (vs 30 anon)
-    cryptopanic_api_key: Optional[str] = None # free key at cryptopanic.com/developers/api/
+    binance_api_key: str | None = None  # optional — only needed for order placement
+    binance_api_secret: str | None = None  # optional — public market data needs no key
+    coingecko_api_key: str | None = None  # optional free key → 50 req/min (vs 30 anon)
+    cryptopanic_api_key: str | None = None  # free key at cryptopanic.com/developers/api/
 
     # Crypto universe & strategy
     crypto_enabled: bool = False
-    crypto_universe_size: int = 30            # top-N coins by market cap to scan
+    crypto_universe_size: int = 30  # top-N coins by market cap to scan
     crypto_min_volume_usd: float = 5_000_000  # 24 h volume floor (USD)
-    crypto_signal_threshold: float = 0.65    # same default as equities
-    crypto_max_position_pct: float = 0.01    # tighter cap — crypto is more volatile
+    crypto_signal_threshold: float = 0.65  # same default as equities
+    crypto_max_position_pct: float = 0.01  # tighter cap — crypto is more volatile
 
     # Monitoring
-    telegram_bot_token: Optional[str] = None
-    telegram_chat_id: Optional[str] = None
+    telegram_bot_token: str | None = None
+    telegram_chat_id: str | None = None
     mlflow_tracking_uri: str = "http://localhost:5001"
 
     # Performance tuning — override in .env to tune for your hardware/tier
-    kite_rps: int = 3                  # Kite API: max historical requests/second
+    kite_rps: int = 3  # Kite API: max historical requests/second
     bulk_ingest_batch_size: int = 500  # OHLCV rows to accumulate before a DB flush
-    bulk_ingest_max_workers: int = 8   # Threads fetching from Kite API
-    bulk_ingest_db_workers: int = 2    # Threads writing to DB concurrently
+    bulk_ingest_max_workers: int = 8  # Threads fetching from Kite API
+    bulk_ingest_db_workers: int = 2  # Threads writing to DB concurrently
 
     # Market mode: "equity" | "crypto" | "both"
     market_type: str = "equity"
@@ -70,18 +69,12 @@ class Settings(BaseSettings):
     weekly_dd_limit: float = 0.07
     paper_trade_mode: bool = True
 
-    # Crypto position limits
-    crypto_max_position_pct: float = 0.01
-    crypto_signal_threshold: float = 0.70
-    crypto_min_volume_usd: float = 1_000_000.0
-    coingecko_api_key: Optional[str] = None
-
     # NSE Nifty 50 instrument token (for regime detection)
     # Default is the NSE:NIFTY 50 token on Zerodha Kite
     nifty50_token: int = 256265
 
     # A/B test routing — fraction of signals routed to challenger (Staging) model
-    ab_test_pct: float = 0.0   # 0 = disabled; 0.2 = 20% to challenger
+    ab_test_pct: float = 0.0  # 0 = disabled; 0.2 = 20% to challenger
 
     # Feature flags
     earnings_filter_enabled: bool = False

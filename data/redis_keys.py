@@ -7,6 +7,7 @@ schema changes a single-file edit.
 
 Key namespace: ``trading:{domain}:{resource}[:{id}]``
 """
+
 from __future__ import annotations
 
 

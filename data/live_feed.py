@@ -34,22 +34,22 @@ Usage
     feed.subscribe_breakouts(callback=lambda msg: print(msg))
     feed.stop()
 """
+
 from __future__ import annotations
 
 import json
 import threading
 import time
 from collections import defaultdict, deque
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, Callable
 
+import pandas as pd
 import structlog
 from kiteconnect import KiteTicker
 
 from data.redis_keys import RedisKeys
-from data.store import get_engine, get_redis, write_ohlcv
-from sqlalchemy import text
-import pandas as pd
+from data.store import get_redis, write_ohlcv
 
 log = structlog.get_logger(__name__)
 
@@ -57,49 +57,50 @@ log = structlog.get_logger(__name__)
 # Constants
 # ---------------------------------------------------------------------------
 
-_TICK_BUFFER_MAXLEN   = 20_000   # drop oldest if consumer falls behind
-_FLUSH_INTERVAL_SEC   = 0.25     # drain buffer 4×/second
-_BAR_INTERVAL_MIN     = 5        # aggregate into 5-minute bars
-_TICK_TTL_SEC         = 10       # Redis TTL for latest-tick keys
-_PUBSUB_BARS_5MIN     = "bars:5min"
-_PUBSUB_BARS_DAY      = "bars:day"
-_PUBSUB_BREAKOUT_VCP  = "breakout:vcp"
+_TICK_BUFFER_MAXLEN = 20_000  # drop oldest if consumer falls behind
+_FLUSH_INTERVAL_SEC = 0.25  # drain buffer 4×/second
+_BAR_INTERVAL_MIN = 5  # aggregate into 5-minute bars
+_TICK_TTL_SEC = 10  # Redis TTL for latest-tick keys
+_PUBSUB_BARS_5MIN = "bars:5min"
+_PUBSUB_BARS_DAY = "bars:day"
+_PUBSUB_BREAKOUT_VCP = "breakout:vcp"
 
 # volume surge threshold for VCP breakout confirmation
-_VOLUME_SURGE_RATIO   = 1.40     # 40 % above 50-day average
+_VOLUME_SURGE_RATIO = 1.40  # 40 % above 50-day average
 
 
 # ---------------------------------------------------------------------------
 # Bar aggregator — in-memory 5-min OHLCV builder
 # ---------------------------------------------------------------------------
 
+
 class _Bar:
-    __slots__ = ("open", "high", "low", "close", "volume", "ts")
+    __slots__ = ("close", "high", "low", "open", "ts", "volume")
 
     def __init__(self, price: float, volume: int, ts: datetime) -> None:
-        self.open   = price
-        self.high   = price
-        self.low    = price
-        self.close  = price
+        self.open = price
+        self.high = price
+        self.low = price
+        self.close = price
         self.volume = volume
-        self.ts     = ts          # bar open timestamp (floored to interval)
+        self.ts = ts  # bar open timestamp (floored to interval)
 
     def update(self, price: float, volume: int) -> None:
         if price > self.high:
             self.high = price
         if price < self.low:
             self.low = price
-        self.close   = price
+        self.close = price
         self.volume += volume
 
     def to_dict(self, symbol: str) -> dict[str, Any]:
         return {
             "symbol": symbol,
-            "time":   self.ts.isoformat(),
-            "open":   self.open,
-            "high":   self.high,
-            "low":    self.low,
-            "close":  self.close,
+            "time": self.ts.isoformat(),
+            "open": self.open,
+            "high": self.high,
+            "low": self.low,
+            "close": self.close,
             "volume": self.volume,
         }
 
@@ -117,7 +118,7 @@ class BarAggregator:
     """
 
     def __init__(self, interval_min: int = _BAR_INTERVAL_MIN) -> None:
-        self._interval   = interval_min
+        self._interval = interval_min
         self._bars: dict[str, _Bar] = {}
         self._locks: dict[str, threading.Lock] = defaultdict(threading.Lock)
         self._on_close: list[Callable[[str, _Bar], None]] = []
@@ -156,6 +157,7 @@ class BarAggregator:
 # VCP breakout checker — runs per-symbol on each bar close
 # ---------------------------------------------------------------------------
 
+
 class VCPBreakoutChecker:
     """
     Checks whether a completed bar breaks above the pre-computed pivot
@@ -176,30 +178,28 @@ class VCPBreakoutChecker:
         """
         raw = self._r.get(f"vcp:pivot:{symbol}")
         if raw is None:
-            return None   # symbol not on VCP watchlist
+            return None  # symbol not on VCP watchlist
 
         meta = json.loads(raw)
-        pivot    = float(meta.get("pivot", 0))
-        avg_vol  = float(meta.get("avg_vol_50d", 1))
+        pivot = float(meta.get("pivot", 0))
+        avg_vol = float(meta.get("avg_vol_50d", 1))
 
         if bar.close <= pivot:
-            return None   # did not break above pivot
+            return None  # did not break above pivot
 
         vol_ratio = bar.volume / avg_vol if avg_vol > 0 else 0.0
         if vol_ratio < _VOLUME_SURGE_RATIO:
-            return None   # no volume confirmation
+            return None  # no volume confirmation
 
         return {
-            "symbol":       symbol,
-            "price":        bar.close,
-            "pivot":        pivot,
+            "symbol": symbol,
+            "price": bar.close,
+            "pivot": pivot,
             "volume_ratio": round(vol_ratio, 2),
-            "bar_time":     bar.ts.isoformat(),
+            "bar_time": bar.ts.isoformat(),
         }
 
-    def store_pivot(
-        self, symbol: str, pivot: float, avg_vol_50d: float
-    ) -> None:
+    def store_pivot(self, symbol: str, pivot: float, avg_vol_50d: float) -> None:
         """Write/update a VCP pivot into Redis (called by the daily scanner)."""
         self._r.set(
             f"vcp:pivot:{symbol}",
@@ -214,6 +214,7 @@ class VCPBreakoutChecker:
 # Tick processor — drains the buffer in batches
 # ---------------------------------------------------------------------------
 
+
 class _TickProcessor:
     """
     Runs in a background daemon thread.
@@ -227,12 +228,12 @@ class _TickProcessor:
         bar_agg: BarAggregator,
         vcp_checker: VCPBreakoutChecker,
     ) -> None:
-        self._buf            = buffer
-        self._token_to_sym   = token_to_symbol
-        self._bar_agg        = bar_agg
-        self._vcp_checker    = vcp_checker
-        self._r              = get_redis()
-        self._running        = False
+        self._buf = buffer
+        self._token_to_sym = token_to_symbol
+        self._bar_agg = bar_agg
+        self._vcp_checker = vcp_checker
+        self._r = get_redis()
+        self._running = False
 
     def start(self) -> None:
         self._running = True
@@ -263,8 +264,8 @@ class _TickProcessor:
         pipe = self._r.pipeline(transaction=False)
 
         for tick in ticks:
-            token  = tick.get("instrument_token")
-            ltp    = tick.get("last_price") or tick.get("last_traded_price")
+            token = tick.get("instrument_token")
+            ltp = tick.get("last_price") or tick.get("last_traded_price")
             volume = int(tick.get("volume_traded") or tick.get("volume") or 0)
             ts_raw = tick.get("exchange_timestamp") or tick.get("timestamp")
 
@@ -284,10 +285,7 @@ class _TickProcessor:
 
             # Aggregate into 5-min bar
             if ts_raw:
-                ts = (
-                    ts_raw if isinstance(ts_raw, datetime)
-                    else datetime.fromisoformat(str(ts_raw))
-                )
+                ts = ts_raw if isinstance(ts_raw, datetime) else datetime.fromisoformat(str(ts_raw))
                 self._bar_agg.update(symbol, float(ltp), volume, ts)
 
         # Single round-trip for all tick updates in this batch
@@ -296,18 +294,16 @@ class _TickProcessor:
         except Exception as exc:
             log.error("redis_pipeline_flush_failed", error=str(exc))
 
-    def _update_day_bar(
-        self, symbol: str, tick: dict, pipe: Any
-    ) -> None:
+    def _update_day_bar(self, symbol: str, tick: dict, pipe: Any) -> None:
         """Store live day-bar from MODE_QUOTE ohlc field."""
         ohlc = tick["ohlc"]
         bar = {
             "symbol": symbol,
-            "time":   datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M"),
-            "open":   ohlc.get("open"),
-            "high":   ohlc.get("high"),
-            "low":    ohlc.get("low"),
-            "close":  tick.get("last_price"),
+            "time": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M"),
+            "open": ohlc.get("open"),
+            "high": ohlc.get("high"),
+            "low": ohlc.get("low"),
+            "close": tick.get("last_price"),
             "volume": tick.get("volume_traded"),
         }
         pipe.set(f"bar:day:{symbol}", json.dumps(bar))
@@ -317,6 +313,7 @@ class _TickProcessor:
 # ---------------------------------------------------------------------------
 # LiveFeed — public API
 # ---------------------------------------------------------------------------
+
 
 class LiveFeed:
     """
@@ -332,16 +329,16 @@ class LiveFeed:
     """
 
     def __init__(self, api_key: str, access_token: str) -> None:
-        self._api_key      = api_key
+        self._api_key = api_key
         self._access_token = access_token
         self._ticker: KiteTicker | None = None
-        self._token_map: dict[int, str] = {}   # token → symbol
+        self._token_map: dict[int, str] = {}  # token → symbol
         self._buffer: deque = deque(maxlen=_TICK_BUFFER_MAXLEN)
-        self._bar_agg      = BarAggregator()
-        self._vcp_checker  = VCPBreakoutChecker()
+        self._bar_agg = BarAggregator()
+        self._vcp_checker = VCPBreakoutChecker()
         self._processor: _TickProcessor | None = None
         self._breakout_cbs: list[Callable[[dict], None]] = []
-        self._r            = get_redis()
+        self._r = get_redis()
 
         # Wire bar-close events
         self._bar_agg.on_bar_close(self._on_bar_close)
@@ -355,10 +352,7 @@ class LiveFeed:
         Build the token → symbol map from instrument dicts.
         Call before start().
         """
-        self._token_map = {
-            i["instrument_token"]: i["tradingsymbol"]
-            for i in instruments
-        }
+        self._token_map = {i["instrument_token"]: i["tradingsymbol"] for i in instruments}
 
     def store_vcp_pivots(self, candidates: list[dict]) -> None:
         """
@@ -369,12 +363,12 @@ class LiveFeed:
         before calling this.  Symbols NOT in candidates have their pivot cleared.
         """
         current_keys = set(self._r.keys("vcp:pivot:*"))
-        new_symbols  = set()
+        new_symbols = set()
 
         for c in candidates:
-            sym      = c["symbol"]
-            pivot    = c["pivot_buy"]
-            avg_vol  = c.get("avg_vol_50d", 1_000_000)
+            sym = c["symbol"]
+            pivot = c["pivot_buy"]
+            avg_vol = c.get("avg_vol_50d", 1_000_000)
             self._vcp_checker.store_pivot(sym, pivot, avg_vol)
             new_symbols.add(f"vcp:pivot:{sym}")
 
@@ -446,10 +440,10 @@ class LiveFeed:
                 log.error("live_feed_max_retries_exceeded")
                 ws.stop()
 
-        ticker.on_ticks     = on_ticks
-        ticker.on_connect   = on_connect
-        ticker.on_error     = on_error
-        ticker.on_close     = on_close
+        ticker.on_ticks = on_ticks
+        ticker.on_connect = on_connect
+        ticker.on_error = on_error
+        ticker.on_close = on_close
         ticker.on_reconnect = on_reconnect
 
         # threaded=True → WebSocket runs in its own daemon thread
@@ -514,22 +508,24 @@ class LiveFeed:
                 log.error("breakout_callback_error", error=str(exc))
 
     def _write_bar_to_db(self, symbol: str, bar: _Bar) -> None:
-        token = next(
-            (t for t, s in self._token_map.items() if s == symbol), None
-        )
+        token = next((t for t, s in self._token_map.items() if s == symbol), None)
         if token is None:
             return
-        row = pd.DataFrame([{
-            "time":     bar.ts,
-            "token":    token,
-            "symbol":   symbol,
-            "open":     bar.open,
-            "high":     bar.high,
-            "low":      bar.low,
-            "close":    bar.close,
-            "volume":   bar.volume,
-            "interval": "5minute",
-        }])
+        row = pd.DataFrame(
+            [
+                {
+                    "time": bar.ts,
+                    "token": token,
+                    "symbol": symbol,
+                    "open": bar.open,
+                    "high": bar.high,
+                    "low": bar.low,
+                    "close": bar.close,
+                    "volume": bar.volume,
+                    "interval": "5minute",
+                }
+            ]
+        )
         try:
             write_ohlcv(row)
         except Exception as exc:
@@ -539,6 +535,7 @@ class LiveFeed:
 # ---------------------------------------------------------------------------
 # Redis pub/sub consumer helper
 # ---------------------------------------------------------------------------
+
 
 def subscribe_channel(
     channel: str,
@@ -561,9 +558,10 @@ def subscribe_channel(
 
         subscribe_channel("breakout:vcp", on_breakout)
     """
+
     def _listen() -> None:
-        r   = get_redis()
-        ps  = r.pubsub(ignore_subscribe_messages=True)
+        r = get_redis()
+        ps = r.pubsub(ignore_subscribe_messages=True)
         ps.subscribe(channel)
         log.info("pubsub_subscribed", channel=channel)
         for message in ps.listen():

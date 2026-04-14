@@ -1,14 +1,15 @@
 """Unit tests for risk/monitor.py — TDD RED phase. Mocks Redis."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from risk.monitor import PortfolioMonitor
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_monitor() -> tuple[PortfolioMonitor, MagicMock]:
     with patch("risk.monitor.get_redis") as mock_get_redis:
@@ -22,6 +23,7 @@ def _make_monitor() -> tuple[PortfolioMonitor, MagicMock]:
 # ---------------------------------------------------------------------------
 # update_position
 # ---------------------------------------------------------------------------
+
 
 class TestUpdatePosition:
     def test_adds_new_position(self):
@@ -49,13 +51,14 @@ class TestUpdatePosition:
 # get_pnl
 # ---------------------------------------------------------------------------
 
+
 class TestGetPnl:
     def test_unrealized_pnl_correct(self):
         monitor, _ = _make_monitor()
         with patch.object(monitor, "_persist"):
             monitor.update_position("RELIANCE", qty=10, avg_price=2500.0, current_price=2600.0)
         pnl = monitor.get_pnl()
-        assert pnl["unrealized"] == pytest.approx(1000.0)   # 10 * (2600 - 2500)
+        assert pnl["unrealized"] == pytest.approx(1000.0)  # 10 * (2600 - 2500)
 
     def test_zero_pnl_on_no_positions(self):
         monitor, _ = _make_monitor()
@@ -69,7 +72,7 @@ class TestGetPnl:
         with patch.object(monitor, "_persist"):
             monitor.update_position("INFY", qty=10, avg_price=1000.0, current_price=1100.0)
         pnl = monitor.get_pnl()
-        assert pnl["pct_return"] == pytest.approx(0.002)   # 1000 / 500_000
+        assert pnl["pct_return"] == pytest.approx(0.002)  # 1000 / 500_000
 
     def test_record_realized_pnl(self):
         monitor, _ = _make_monitor()
@@ -90,6 +93,7 @@ class TestGetPnl:
 # ---------------------------------------------------------------------------
 # get_drawdown
 # ---------------------------------------------------------------------------
+
 
 class TestGetDrawdown:
     def test_no_loss_zero_drawdown(self):
@@ -125,6 +129,7 @@ class TestGetDrawdown:
 # get_exposure
 # ---------------------------------------------------------------------------
 
+
 class TestGetExposure:
     def test_no_positions_zero_exposure(self):
         monitor, _ = _make_monitor()
@@ -152,6 +157,7 @@ class TestGetExposure:
 # ---------------------------------------------------------------------------
 # Prometheus metrics export
 # ---------------------------------------------------------------------------
+
 
 class TestPrometheusExport:
     def test_export_returns_string(self):

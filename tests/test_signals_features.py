@@ -2,16 +2,21 @@
 Unit tests for signals/features.py — TDD RED phase.
 No external APIs, no DB. Uses synthetic OHLCV data.
 """
+
 import numpy as np
 import pandas as pd
-import pytest
 
-from signals.features import AUXILIARY_FEATURE_COLUMNS, FEATURE_COLUMNS, LABEL_COLUMNS, build_features
-
+from signals.features import (
+    AUXILIARY_FEATURE_COLUMNS,
+    FEATURE_COLUMNS,
+    LABEL_COLUMNS,
+    build_features,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_ohlcv(n: int = 300) -> pd.DataFrame:
     """Synthetic OHLCV with realistic price behaviour."""
@@ -37,6 +42,7 @@ def _make_ohlcv(n: int = 300) -> pd.DataFrame:
 # build_features — basic contract
 # ---------------------------------------------------------------------------
 
+
 class TestBuildFeaturesContract:
     def test_returns_dataframe(self):
         df = _make_ohlcv()
@@ -54,8 +60,9 @@ class TestBuildFeaturesContract:
         # Auxiliary columns and close are intentionally NaN when not provided
         skip = set(LABEL_COLUMNS) | set(AUXILIARY_FEATURE_COLUMNS) | {"close"}
         feature_cols = [c for c in result.columns if c not in skip]
-        assert not result[feature_cols].isnull().any().any(), \
+        assert not result[feature_cols].isnull().any().any(), (
             f"NaN found in features: {result[feature_cols].isnull().sum()[result[feature_cols].isnull().any()]}"
+        )
 
     def test_all_expected_feature_columns_present(self):
         df = _make_ohlcv()
@@ -94,6 +101,7 @@ class TestBuildFeaturesContract:
 # Momentum features
 # ---------------------------------------------------------------------------
 
+
 class TestMomentumFeatures:
     def test_rsi_14_bounded_0_to_100(self):
         df = _make_ohlcv()
@@ -121,6 +129,7 @@ class TestMomentumFeatures:
 # Volatility features
 # ---------------------------------------------------------------------------
 
+
 class TestVolatilityFeatures:
     def test_atr_pct_positive(self):
         df = _make_ohlcv()
@@ -145,6 +154,7 @@ class TestVolatilityFeatures:
 # Volume features
 # ---------------------------------------------------------------------------
 
+
 class TestVolumeFeatures:
     def test_volume_zscore_mean_near_zero(self):
         df = _make_ohlcv()
@@ -160,6 +170,7 @@ class TestVolumeFeatures:
 # ---------------------------------------------------------------------------
 # Trend features
 # ---------------------------------------------------------------------------
+
 
 class TestTrendFeatures:
     def test_ema_cross_9_21_values(self):
@@ -184,6 +195,7 @@ class TestTrendFeatures:
 # Mean reversion features
 # ---------------------------------------------------------------------------
 
+
 class TestMeanReversionFeatures:
     def test_zscore_20_reasonable_range(self):
         df = _make_ohlcv()
@@ -205,6 +217,7 @@ class TestMeanReversionFeatures:
 # ---------------------------------------------------------------------------
 # Label generation (training only)
 # ---------------------------------------------------------------------------
+
 
 class TestLabelGeneration:
     def test_label_is_binary(self):
@@ -229,6 +242,7 @@ class TestLabelGeneration:
 # ---------------------------------------------------------------------------
 # Regime feature
 # ---------------------------------------------------------------------------
+
 
 class TestRegimeFeature:
     def test_vol_regime_is_binary(self):

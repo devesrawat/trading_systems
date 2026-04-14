@@ -1,10 +1,10 @@
 """Unit tests for llm/sentiment.py — TDD RED phase. No GPU/HuggingFace download needed."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from llm.sentiment import FinBERTScorer
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -34,23 +34,29 @@ def _make_mock_scorer() -> tuple[FinBERTScorer, MagicMock]:
             results = []
             for text in texts:
                 if any(w in text.lower() for w in ["profit", "wins", "beats", "raises dividend"]):
-                    results.append([
-                        {"label": "positive", "score": 0.85},
-                        {"label": "negative", "score": 0.05},
-                        {"label": "neutral",  "score": 0.10},
-                    ])
+                    results.append(
+                        [
+                            {"label": "positive", "score": 0.85},
+                            {"label": "negative", "score": 0.05},
+                            {"label": "neutral", "score": 0.10},
+                        ]
+                    )
                 elif any(w in text.lower() for w in ["cuts", "misses", "sells off", "headwinds"]):
-                    results.append([
-                        {"label": "positive", "score": 0.05},
-                        {"label": "negative", "score": 0.88},
-                        {"label": "neutral",  "score": 0.07},
-                    ])
+                    results.append(
+                        [
+                            {"label": "positive", "score": 0.05},
+                            {"label": "negative", "score": 0.88},
+                            {"label": "neutral", "score": 0.07},
+                        ]
+                    )
                 else:
-                    results.append([
-                        {"label": "positive", "score": 0.33},
-                        {"label": "negative", "score": 0.33},
-                        {"label": "neutral",  "score": 0.34},
-                    ])
+                    results.append(
+                        [
+                            {"label": "positive", "score": 0.33},
+                            {"label": "negative", "score": 0.33},
+                            {"label": "neutral", "score": 0.34},
+                        ]
+                    )
             return results
 
         mock_pipe.side_effect = fake_infer
@@ -63,6 +69,7 @@ def _make_mock_scorer() -> tuple[FinBERTScorer, MagicMock]:
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
+
 
 class TestFinBERTScorerInit:
     def test_loads_model_on_init(self):
@@ -89,6 +96,7 @@ class TestFinBERTScorerInit:
 # ---------------------------------------------------------------------------
 # score()
 # ---------------------------------------------------------------------------
+
 
 class TestScore:
     def test_returns_list_of_floats(self):
@@ -135,11 +143,13 @@ class TestScore:
         """score = positive_prob - negative_prob."""
         with patch("llm.sentiment.pipeline") as mock_fn:
             mock_pipe = MagicMock()
-            mock_pipe.return_value = [[
-                {"label": "positive", "score": 0.70},
-                {"label": "negative", "score": 0.20},
-                {"label": "neutral",  "score": 0.10},
-            ]]
+            mock_pipe.return_value = [
+                [
+                    {"label": "positive", "score": 0.70},
+                    {"label": "negative", "score": 0.20},
+                    {"label": "neutral", "score": 0.10},
+                ]
+            ]
             mock_fn.return_value = mock_pipe
             scorer = FinBERTScorer()
             result = scorer.score(["test headline"])
@@ -149,6 +159,7 @@ class TestScore:
 # ---------------------------------------------------------------------------
 # score_aggregate()
 # ---------------------------------------------------------------------------
+
 
 class TestScoreAggregate:
     def test_mean_aggregation(self):
@@ -169,14 +180,24 @@ class TestScoreAggregate:
             mock_pipe = MagicMock()
             # First headline: strong negative. Last headline: strong positive.
             mock_pipe.side_effect = lambda texts, **kw: [
-                [{"label": "positive", "score": 0.05}, {"label": "negative", "score": 0.90}, {"label": "neutral", "score": 0.05}]
+                [
+                    {"label": "positive", "score": 0.05},
+                    {"label": "negative", "score": 0.90},
+                    {"label": "neutral", "score": 0.05},
+                ]
                 if i == 0
-                else [{"label": "positive", "score": 0.90}, {"label": "negative", "score": 0.05}, {"label": "neutral", "score": 0.05}]
+                else [
+                    {"label": "positive", "score": 0.90},
+                    {"label": "negative", "score": 0.05},
+                    {"label": "neutral", "score": 0.05},
+                ]
                 for i in range(len(texts))
             ]
             mock_fn.return_value = mock_pipe
             scorer = FinBERTScorer()
-            score = scorer.score_aggregate(["old bad news", "new great news"], method="weighted_recency")
+            score = scorer.score_aggregate(
+                ["old bad news", "new great news"], method="weighted_recency"
+            )
         # Weighted toward recent (positive) → aggregate should be positive
         assert score > 0
 
@@ -195,6 +216,7 @@ class TestScoreAggregate:
 # Redis caching
 # ---------------------------------------------------------------------------
 
+
 class TestRedisCache:
     @patch("llm.sentiment.get_redis")
     def test_cache_hit_skips_model(self, mock_get_redis):
@@ -205,7 +227,9 @@ class TestRedisCache:
         with patch("llm.sentiment.pipeline") as mock_fn:
             mock_fn.return_value = MagicMock()
             scorer = FinBERTScorer()
-            result = scorer.score_aggregate_cached(["headline"], symbol="RELIANCE", date="2024-01-15")
+            result = scorer.score_aggregate_cached(
+                ["headline"], symbol="RELIANCE", date="2024-01-15"
+            )
 
         assert result == 0.75
         # Model should NOT have been called
@@ -223,5 +247,5 @@ class TestRedisCache:
 
         mock_redis.setex.assert_called_once()
         call_args = mock_redis.setex.call_args[0]
-        assert "trading:sentiment:TCS:2024-01-15" == call_args[0]
+        assert call_args[0] == "trading:sentiment:TCS:2024-01-15"
         assert call_args[1] == 3600  # 1 hour TTL

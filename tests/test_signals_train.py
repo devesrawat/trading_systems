@@ -1,4 +1,5 @@
 """Unit tests for signals/train.py — TDD RED phase. Uses synthetic data, mocks MLflow."""
+
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -17,6 +18,7 @@ except Exception:
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_training_df(n: int = 600) -> pd.DataFrame:
     """Synthetic feature + label DataFrame spanning ~2.5 years of business days."""
     rng = np.random.default_rng(42)
@@ -30,6 +32,7 @@ def _make_training_df(n: int = 600) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # WalkForwardTrainer — constructor / config
 # ---------------------------------------------------------------------------
+
 
 class TestWalkForwardTrainerConfig:
     def test_default_params(self):
@@ -52,6 +55,7 @@ class TestWalkForwardTrainerConfig:
 # ---------------------------------------------------------------------------
 # WalkForwardTrainer — fold splitting
 # ---------------------------------------------------------------------------
+
 
 class TestFoldSplitting:
     def test_generates_at_least_one_fold(self):
@@ -94,6 +98,7 @@ class TestFoldSplitting:
 # ---------------------------------------------------------------------------
 # WalkForwardTrainer — run()
 # ---------------------------------------------------------------------------
+
 
 class TestWalkForwardRun:
     @patch("signals.train.mlflow")
@@ -140,7 +145,7 @@ class TestWalkForwardRun:
     @patch("signals.train.mlflow")
     def test_insufficient_data_raises(self, mock_mlflow):
         wft = WalkForwardTrainer(train_months=24, test_months=3, purge_days=5)
-        df = _make_training_df(50)   # way too short
+        df = _make_training_df(50)  # way too short
         with pytest.raises(ValueError, match="insufficient"):
             wft.run(df, features=FEATURE_COLUMNS, label="label")
 
@@ -149,10 +154,12 @@ class TestWalkForwardRun:
 # WalkForwardTrainer — best_model()
 # ---------------------------------------------------------------------------
 
+
 class TestBestModel:
     @patch("signals.train.mlflow")
     def test_best_model_returns_xgboost(self, mock_mlflow):
         import xgboost as xgb
+
         mock_mlflow.start_run.return_value.__enter__ = MagicMock(return_value=MagicMock())
         mock_mlflow.start_run.return_value.__exit__ = MagicMock(return_value=False)
 
@@ -165,13 +172,14 @@ class TestBestModel:
     @patch("signals.train.mlflow")
     def test_best_model_raises_before_run(self, mock_mlflow):
         wft = WalkForwardTrainer()
-        with pytest.raises(RuntimeError, match="run()"):
+        with pytest.raises(RuntimeError, match=r"run\(\)"):
             wft.best_model()
 
 
 # ---------------------------------------------------------------------------
 # WalkForwardTrainer — print_summary()
 # ---------------------------------------------------------------------------
+
 
 class TestPrintSummary:
     @patch("signals.train.mlflow")

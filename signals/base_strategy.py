@@ -11,6 +11,7 @@ Rules for strategy authors
    worker process and must be pure CPU.
 5. All fields in the returned dict must be JSON-serialisable.
 """
+
 from __future__ import annotations
 
 import importlib
@@ -37,10 +38,10 @@ class BaseStrategy(ABC):
     min_bars      : minimum clean bars required before scan() is called
     """
 
-    name: str          = "base"
+    name: str = "base"
     lookback_days: int = 400
-    interval: str      = "day"
-    min_bars: int      = 100
+    interval: str = "day"
+    min_bars: int = 100
 
     # ------------------------------------------------------------------
     # Clean pipeline  (shared by all strategies, override if needed)
@@ -97,7 +98,7 @@ class BaseStrategy(ABC):
         return result.get("symbol", "")
 
     @staticmethod
-    def from_fqname(fqname: str) -> "BaseStrategy":
+    def from_fqname(fqname: str) -> BaseStrategy:
         """Instantiate a strategy from its fully-qualified name."""
         module_name, class_name = fqname.rsplit(".", 1)
         module = importlib.import_module(module_name)

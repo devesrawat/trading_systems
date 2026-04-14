@@ -4,6 +4,7 @@ Revision ID: 0001
 Revises:
 Create Date: 2026-03-22
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -32,9 +33,7 @@ def upgrade() -> None:
         )
     """)
     op.execute("SELECT create_hypertable('ohlcv', 'time', if_not_exists => TRUE)")
-    op.execute(
-        "CREATE INDEX IF NOT EXISTS ohlcv_token_time_idx ON ohlcv (token, time DESC)"
-    )
+    op.execute("CREATE INDEX IF NOT EXISTS ohlcv_token_time_idx ON ohlcv (token, time DESC)")
 
     # ------------------------------------------------------------------
     # sentiment_scores — TimescaleDB hypertable for FinBERT scores
@@ -47,9 +46,7 @@ def upgrade() -> None:
             headline_count  INT
         )
     """)
-    op.execute(
-        "SELECT create_hypertable('sentiment_scores', 'time', if_not_exists => TRUE)"
-    )
+    op.execute("SELECT create_hypertable('sentiment_scores', 'time', if_not_exists => TRUE)")
 
     # ------------------------------------------------------------------
     # paper_trades — audit log (SEBI compliance)

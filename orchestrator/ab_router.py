@@ -21,9 +21,11 @@ Usage
 
     router.record_outcome(symbol, date, slot, outcome_pnl)
 """
+
 from __future__ import annotations
 
 import hashlib
+from contextlib import suppress
 from datetime import date as date_type
 from typing import Literal
 
@@ -96,6 +98,7 @@ class SignalRouter:
         value = f"{slot}:{pnl_pct:.6f}"
         try:
             from data.store import get_redis
+
             get_redis().setex(key, 60 * 60 * 24 * 90, value)
             log.debug("ab_outcome_recorded", symbol=symbol, date=date_str, slot=slot, pnl=pnl_pct)
         except Exception as exc:
@@ -111,6 +114,7 @@ class SignalRouter:
         key = _REDIS_SLOT_KEY.format(symbol=symbol, date=date_str)
         try:
             from data.store import get_redis
+
             raw = get_redis().get(key)
             if raw:
                 val = raw.decode() if isinstance(raw, bytes) else raw
@@ -131,6 +135,7 @@ class SignalRouter:
 
         try:
             from data.store import get_redis
+
             r = get_redis()
             today = date_type.today()
             for delta in range(window_days):
@@ -142,10 +147,8 @@ class SignalRouter:
                     val = raw.decode() if isinstance(raw, bytes) else raw
                     parts = val.split(":", 1)
                     if len(parts) == 2 and parts[0] in stats:
-                        try:
+                        with suppress(ValueError):
                             stats[parts[0]].append(float(parts[1]))
-                        except ValueError:
-                            pass
         except Exception as exc:
             log.warning("ab_summary_failed", error=str(exc))
 
@@ -173,6 +176,7 @@ class SignalRouter:
         key = _REDIS_SLOT_KEY.format(symbol=symbol, date=date_str)
         try:
             from data.store import get_redis
+
             get_redis().setex(key, 60 * 60 * 24 * 90, slot)
         except Exception as exc:
             log.debug("ab_slot_persist_failed", error=str(exc))

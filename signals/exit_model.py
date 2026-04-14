@@ -16,6 +16,7 @@ Usage:
     if exit_model.should_exit_rule_based(entry_price, current_price, atr):
         executor.place_market_order(symbol, "SELL", quantity, ...)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -26,13 +27,14 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _EXIT_MODEL_NAME = "nse_exit_signal_eq"
-_PROFIT_TARGET_R = 2.0   # take partial profit at 2× ATR
-_TRAILING_STOP_R = 1.0   # trailing stop at 1× ATR below high-water mark
+_PROFIT_TARGET_R = 2.0  # take partial profit at 2× ATR
+_TRAILING_STOP_R = 1.0  # trailing stop at 1× ATR below high-water mark
 
 
 @dataclass
 class PositionContext:
     """Runtime context for a single open position."""
+
     symbol: str
     entry_price: float
     atr_at_entry: float = 0.0
@@ -114,6 +116,7 @@ class ExitModel:
         try:
             import numpy as np
             import pandas as pd
+
             df = pd.DataFrame([feature_row])[self._model.feature_names]
             probs = self._model._model.predict_proba(df.values.astype(np.float32))
             return float(probs[0, 1])
@@ -128,12 +131,14 @@ class ExitModel:
     def _try_load_model(self) -> None:
         try:
             import mlflow
+
             if self._tracking_uri:
                 mlflow.set_tracking_uri(self._tracking_uri)
             client = mlflow.MlflowClient()
             versions = client.get_latest_versions(_EXIT_MODEL_NAME, stages=["Production"])
             if versions:
                 from signals.model import SignalModel
+
                 self._model = SignalModel(versions[0].source)
                 log.info("exit_model_loaded", version=versions[0].version)
         except Exception as exc:

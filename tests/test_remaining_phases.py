@@ -5,22 +5,23 @@ Tests for remaining roadmap items:
  - SignalRouter (A/B determinism, threshold boundary, Redis write, summary)
  - retrain_check / _auto_retrain_and_promote (high AUC promotes, low AUC skips)
 """
+
 from __future__ import annotations
 
 import hashlib
-from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pytest
-
 
 # ===========================================================================
 # BinanceBrokerAdapter
 # ===========================================================================
 
+
 class TestBinanceBrokerAdapter:
     def _make(self, capital: float = 1_000_000.0):
         from execution.broker import BinanceBrokerAdapter
+
         return BinanceBrokerAdapter(initial_capital=capital)
 
     def test_is_paper_true(self):
@@ -80,7 +81,7 @@ class TestBinanceBrokerAdapter:
 
 class TestGetBrokerAdapterFactory:
     def test_binance_returns_binance_adapter(self):
-        from execution.broker import get_broker_adapter, BinanceBrokerAdapter
+        from execution.broker import BinanceBrokerAdapter, get_broker_adapter
 
         mock_settings = MagicMock()
         mock_settings.paper_trade_mode = False
@@ -93,7 +94,7 @@ class TestGetBrokerAdapterFactory:
         assert isinstance(adapter, BinanceBrokerAdapter)
 
     def test_zerodha_returns_kite_adapter(self):
-        from execution.broker import get_broker_adapter, KiteBrokerAdapter
+        from execution.broker import KiteBrokerAdapter, get_broker_adapter
 
         mock_settings = MagicMock()
         mock_settings.paper_trade_mode = False
@@ -117,43 +118,83 @@ class TestGetBrokerAdapterFactory:
 # PositionSizer correlation_penalty
 # ===========================================================================
 
+
 class TestPositionSizerCorrelationPenalty:
     def _sizer(self):
         from risk.sizer import PositionSizer
+
         return PositionSizer(total_capital=1_000_000.0, max_position_pct=0.02)
 
     def test_no_penalty_baseline(self):
         sizer = self._sizer()
-        base = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0)
-        no_penalty = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0, correlation_penalty=0.0)
+        base = sizer.size(
+            signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0
+        )
+        no_penalty = sizer.size(
+            signal_probability=0.70,
+            asset_volatility=0.15,
+            current_capital=1_000_000.0,
+            correlation_penalty=0.0,
+        )
         assert base == pytest.approx(no_penalty)
 
     def test_30pct_penalty_reduces_size_by_30pct(self):
         sizer = self._sizer()
-        base = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0)
-        penalised = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0, correlation_penalty=0.30)
+        base = sizer.size(
+            signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0
+        )
+        penalised = sizer.size(
+            signal_probability=0.70,
+            asset_volatility=0.15,
+            current_capital=1_000_000.0,
+            correlation_penalty=0.30,
+        )
         assert penalised == pytest.approx(base * 0.70, rel=1e-4)
 
     def test_full_penalty_produces_near_zero(self):
         sizer = self._sizer()
-        result = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0, correlation_penalty=1.0)
+        result = sizer.size(
+            signal_probability=0.70,
+            asset_volatility=0.15,
+            current_capital=1_000_000.0,
+            correlation_penalty=1.0,
+        )
         assert result == pytest.approx(0.0, abs=0.01)
 
     def test_penalty_clamped_below_zero(self):
         sizer = self._sizer()
-        base = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0)
-        negative = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0, correlation_penalty=-0.5)
+        base = sizer.size(
+            signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0
+        )
+        negative = sizer.size(
+            signal_probability=0.70,
+            asset_volatility=0.15,
+            current_capital=1_000_000.0,
+            correlation_penalty=-0.5,
+        )
         assert negative == pytest.approx(base)
 
     def test_penalty_clamped_above_one(self):
         sizer = self._sizer()
-        result = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0, correlation_penalty=1.5)
+        result = sizer.size(
+            signal_probability=0.70,
+            asset_volatility=0.15,
+            current_capital=1_000_000.0,
+            correlation_penalty=1.5,
+        )
         assert result == pytest.approx(0.0, abs=0.01)
 
     def test_50pct_penalty_halves_size(self):
         sizer = self._sizer()
-        base = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0)
-        half = sizer.size(signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0, correlation_penalty=0.50)
+        base = sizer.size(
+            signal_probability=0.70, asset_volatility=0.15, current_capital=1_000_000.0
+        )
+        half = sizer.size(
+            signal_probability=0.70,
+            asset_volatility=0.15,
+            current_capital=1_000_000.0,
+            correlation_penalty=0.50,
+        )
         assert half == pytest.approx(base * 0.50, rel=1e-4)
 
 
@@ -161,13 +202,16 @@ class TestPositionSizerCorrelationPenalty:
 # SignalRouter (A/B test routing)
 # ===========================================================================
 
+
 class TestSignalRouter:
     def _router(self, pct=0.20):
         from orchestrator.ab_router import SignalRouter
+
         return SignalRouter(challenger_pct=pct)
 
     def test_invalid_pct_raises(self):
         from orchestrator.ab_router import SignalRouter
+
         with pytest.raises(ValueError):
             SignalRouter(challenger_pct=1.5)
         with pytest.raises(ValueError):
@@ -196,6 +240,7 @@ class TestSignalRouter:
     def test_deterministic_uses_md5(self):
         """The bucket calculation must match raw MD5 logic."""
         from orchestrator.ab_router import SignalRouter
+
         symbol, date_str = "RELIANCE", "2026-04-14"
         raw = f"{symbol}:{date_str}".encode()
         digest = hashlib.md5(raw, usedforsecurity=False).hexdigest()
@@ -281,10 +326,12 @@ class TestSignalRouter:
 # retrain_check / _auto_retrain_and_promote
 # ===========================================================================
 
+
 class TestAutoRetrain:
     def _orch(self):
         """Build a minimal stub TradingSystem with no real deps."""
         from orchestrator.main import TradingSystem
+
         orch = object.__new__(TradingSystem)
         orch._open_positions = set()
         orch._circuit_breaker = MagicMock()
@@ -336,6 +383,7 @@ class TestAutoRetrain:
         orch._send_alert = MagicMock()
 
         import pandas as pd
+
         mock_df = pd.DataFrame(
             {c: [0.5] * 600 for c in ["open", "high", "low", "close", "volume", "label"]},
         )
@@ -367,6 +415,7 @@ class TestAutoRetrain:
         orch._send_alert = MagicMock()
 
         import pandas as pd
+
         mock_df = pd.DataFrame(
             {c: [0.5] * 600 for c in ["open", "high", "low", "close", "volume", "label"]},
         )

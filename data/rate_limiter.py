@@ -12,6 +12,7 @@ Usage::
     with limiter:
         response = kite.historical_data(...)
 """
+
 from __future__ import annotations
 
 import time
@@ -37,7 +38,7 @@ class RateLimiter:
         self._sem = Semaphore(rps)
         self._rps = rps
 
-    def __enter__(self) -> "RateLimiter":
+    def __enter__(self) -> RateLimiter:
         self._sem.acquire()
         return self
 

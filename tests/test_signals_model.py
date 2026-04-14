@@ -1,5 +1,5 @@
 """Unit tests for signals/model.py — TDD RED phase. No MLflow server required."""
-import tempfile
+
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -11,10 +11,10 @@ import xgboost as xgb
 from signals.features import FEATURE_COLUMNS
 from signals.model import ModelRegistry, SignalModel
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_features(n: int = 50) -> pd.DataFrame:
     rng = np.random.default_rng(0)
@@ -46,6 +46,7 @@ def _saved_model_path(tmp_path: Path) -> str:
 # SignalModel — loading
 # ---------------------------------------------------------------------------
 
+
 class TestSignalModelLoad:
     def test_loads_from_local_path(self, tmp_path):
         path = _saved_model_path(tmp_path)
@@ -71,6 +72,7 @@ class TestSignalModelLoad:
 # ---------------------------------------------------------------------------
 # SignalModel — predict
 # ---------------------------------------------------------------------------
+
 
 class TestSignalModelPredict:
     def test_predict_returns_series(self, tmp_path):
@@ -111,7 +113,7 @@ class TestSignalModelPredict:
     def test_predict_single_returns_float(self, tmp_path):
         path = _saved_model_path(tmp_path)
         sm = SignalModel(model_path=path)
-        row = {col: 0.5 for col in FEATURE_COLUMNS}
+        row = dict.fromkeys(FEATURE_COLUMNS, 0.5)
         result = sm.predict_single(row)
         assert isinstance(result, float)
         assert 0.0 <= result <= 1.0
@@ -121,25 +123,26 @@ class TestSignalModelPredict:
 # SignalModel — SHAP explain
 # ---------------------------------------------------------------------------
 
+
 class TestSignalModelExplain:
     def test_explain_returns_dict(self, tmp_path):
         path = _saved_model_path(tmp_path)
         sm = SignalModel(model_path=path)
-        row = {col: 0.5 for col in FEATURE_COLUMNS}
+        row = dict.fromkeys(FEATURE_COLUMNS, 0.5)
         result = sm.explain(row)
         assert isinstance(result, dict)
 
     def test_explain_returns_top_10_features(self, tmp_path):
         path = _saved_model_path(tmp_path)
         sm = SignalModel(model_path=path)
-        row = {col: 0.5 for col in FEATURE_COLUMNS}
+        row = dict.fromkeys(FEATURE_COLUMNS, 0.5)
         result = sm.explain(row)
         assert len(result) <= 10
 
     def test_explain_keys_are_feature_names(self, tmp_path):
         path = _saved_model_path(tmp_path)
         sm = SignalModel(model_path=path)
-        row = {col: 0.5 for col in FEATURE_COLUMNS}
+        row = dict.fromkeys(FEATURE_COLUMNS, 0.5)
         result = sm.explain(row)
         for key in result:
             assert key in FEATURE_COLUMNS
@@ -147,7 +150,7 @@ class TestSignalModelExplain:
     def test_explain_values_are_floats(self, tmp_path):
         path = _saved_model_path(tmp_path)
         sm = SignalModel(model_path=path)
-        row = {col: 0.5 for col in FEATURE_COLUMNS}
+        row = dict.fromkeys(FEATURE_COLUMNS, 0.5)
         result = sm.explain(row)
         for v in result.values():
             assert isinstance(v, float)
@@ -156,6 +159,7 @@ class TestSignalModelExplain:
 # ---------------------------------------------------------------------------
 # ModelRegistry
 # ---------------------------------------------------------------------------
+
 
 class TestModelRegistry:
     def test_register_model_calls_mlflow(self, tmp_path):

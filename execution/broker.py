@@ -15,7 +15,8 @@ Hierarchy::
 Factory::
 
     from execution.broker import get_broker_adapter
-    broker = get_broker_adapter()   # reads DATA_PROVIDER + PAPER_TRADE_MODE from settings
+
+    broker = get_broker_adapter()  # reads DATA_PROVIDER + PAPER_TRADE_MODE from settings
 
 Adding a new broker::
 
@@ -30,9 +31,9 @@ Adding a new broker::
 
     # Register in get_broker_adapter() factory below.
 """
+
 from __future__ import annotations
 
-import uuid
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -46,6 +47,7 @@ _BASE_UPSTOX = "https://api.upstox.com/v2"
 # ---------------------------------------------------------------------------
 # Abstract base
 # ---------------------------------------------------------------------------
+
 
 class BrokerAdapter(ABC):
     """Common interface every broker adapter must implement.
@@ -65,11 +67,11 @@ class BrokerAdapter(ABC):
     def place_order(
         self,
         symbol: str,
-        side: str,                  # "BUY" | "SELL"
+        side: str,  # "BUY" | "SELL"
         quantity: int,
         tag: str,
-        price: float = 0.0,         # 0.0 → market order
-        order_type: str = "MARKET", # "MARKET" | "LIMIT"
+        price: float = 0.0,  # 0.0 → market order
+        order_type: str = "MARKET",  # "MARKET" | "LIMIT"
         intraday: bool = True,
     ) -> str:
         """Submit an order and return the broker's order-id string."""
@@ -86,13 +88,17 @@ class BrokerAdapter(ABC):
     def get_balance(self) -> float:
         """Return the available cash balance in the account (INR or USD)."""
 
-    def refresh_auth(self) -> None:
-        """Refresh daily auth tokens if required (no-op for most adapters)."""
+    def refresh_auth(self) -> None:  # noqa: B027
+        """Refresh daily auth tokens if required; default is a no-op.
+
+        Subclasses override this when a daily token refresh is needed (e.g. Kite OAuth).
+        """
 
 
 # ---------------------------------------------------------------------------
 # Kite
 # ---------------------------------------------------------------------------
+
 
 class KiteBrokerAdapter(BrokerAdapter):
     """Zerodha Kite Connect live-order adapter.
@@ -122,19 +128,18 @@ class KiteBrokerAdapter(BrokerAdapter):
     ) -> str:
         product = "MIS" if intraday else "CNC"
         kite_order_type = (
-            self._kite.ORDER_TYPE_MARKET if order_type == "MARKET"
-            else self._kite.ORDER_TYPE_LIMIT
+            self._kite.ORDER_TYPE_MARKET if order_type == "MARKET" else self._kite.ORDER_TYPE_LIMIT
         )
-        kwargs: dict[str, Any] = dict(
-            variety=self._kite.VARIETY_REGULAR,
-            exchange=self._kite.EXCHANGE_NSE,
-            tradingsymbol=symbol,
-            transaction_type=side,
-            quantity=quantity,
-            order_type=kite_order_type,
-            product=product,
-            tag=tag,
-        )
+        kwargs: dict[str, Any] = {
+            "variety": self._kite.VARIETY_REGULAR,
+            "exchange": self._kite.EXCHANGE_NSE,
+            "tradingsymbol": symbol,
+            "transaction_type": side,
+            "quantity": quantity,
+            "order_type": kite_order_type,
+            "product": product,
+            "tag": tag,
+        }
         if order_type == "LIMIT" and price > 0:
             kwargs["price"] = price
 
@@ -164,11 +169,7 @@ class KiteBrokerAdapter(BrokerAdapter):
     def get_balance(self) -> float:
         try:
             margins = self._kite.margins()
-            return float(
-                margins.get("equity", {})
-                       .get("available", {})
-                       .get("live_balance", 0.0)
-            )
+            return float(margins.get("equity", {}).get("available", {}).get("live_balance", 0.0))
         except Exception as exc:
             log.warning("kite_balance_failed", error=str(exc))
             return 0.0
@@ -176,8 +177,9 @@ class KiteBrokerAdapter(BrokerAdapter):
     def refresh_auth(self) -> None:
         """Read the daily access token from Redis and set it on KiteConnect."""
         try:
-            from data.store import get_redis
             from data.redis_keys import RedisKeys
+            from data.store import get_redis
+
             token = get_redis().get(RedisKeys.KITE_ACCESS_TOKEN)
             if token:
                 self._kite.set_access_token(token)
@@ -189,6 +191,7 @@ class KiteBrokerAdapter(BrokerAdapter):
 # ---------------------------------------------------------------------------
 # Upstox
 # ---------------------------------------------------------------------------
+
 
 class UpstoxBrokerAdapter(BrokerAdapter):
     """Upstox v2 live-order adapter.
@@ -232,26 +235,25 @@ class UpstoxBrokerAdapter(BrokerAdapter):
         instrument_key = self._symbol_to_key.get(symbol)
         if not instrument_key:
             raise ValueError(
-                f"No Upstox instrument key for '{symbol}'. "
-                "Call register_instruments() first."
+                f"No Upstox instrument key for '{symbol}'. Call register_instruments() first."
             )
         payload: dict[str, Any] = {
-            "quantity":        quantity,
-            "product":         "I" if intraday else "D",  # Intraday | Delivery
-            "validity":        "DAY",
-            "price":           price if order_type == "LIMIT" else 0,
+            "quantity": quantity,
+            "product": "I" if intraday else "D",  # Intraday | Delivery
+            "validity": "DAY",
+            "price": price if order_type == "LIMIT" else 0,
             "instrument_token": instrument_key,
-            "order_type":      order_type,
+            "order_type": order_type,
             "transaction_type": side,
-            "tag":             tag,
+            "tag": tag,
         }
         resp = _req.post(
             f"{_BASE_UPSTOX}/order/place",
             json=payload,
             headers={
                 "Authorization": f"Bearer {self._token}",
-                "Accept":        "application/json",
-                "Content-Type":  "application/json",
+                "Accept": "application/json",
+                "Content-Type": "application/json",
             },
             timeout=10,
         )
@@ -262,6 +264,7 @@ class UpstoxBrokerAdapter(BrokerAdapter):
 
     def cancel_order(self, order_id: str) -> bool:
         import requests as _req
+
         try:
             resp = _req.delete(
                 f"{_BASE_UPSTOX}/order/cancel",
@@ -277,6 +280,7 @@ class UpstoxBrokerAdapter(BrokerAdapter):
 
     def get_order_status(self, order_id: str) -> dict[str, Any]:
         import requests as _req
+
         try:
             resp = _req.get(
                 f"{_BASE_UPSTOX}/order/details",
@@ -292,6 +296,7 @@ class UpstoxBrokerAdapter(BrokerAdapter):
 
     def get_balance(self) -> float:
         import requests as _req
+
         try:
             resp = _req.get(
                 f"{_BASE_UPSTOX}/user/get-funds-and-margin",
@@ -300,12 +305,7 @@ class UpstoxBrokerAdapter(BrokerAdapter):
                 timeout=10,
             )
             resp.raise_for_status()
-            return float(
-                resp.json()
-                    .get("data", {})
-                    .get("equity", {})
-                    .get("available_margin", 0.0)
-            )
+            return float(resp.json().get("data", {}).get("equity", {}).get("available_margin", 0.0))
         except Exception as exc:
             log.warning("upstox_balance_failed", error=str(exc))
             return 0.0
@@ -317,6 +317,7 @@ class UpstoxBrokerAdapter(BrokerAdapter):
 # ---------------------------------------------------------------------------
 # Binance (paper mode only — live crypto execution deferred)
 # ---------------------------------------------------------------------------
+
 
 class BinanceBrokerAdapter(BrokerAdapter):
     """
@@ -389,8 +390,9 @@ class BinanceBrokerAdapter(BrokerAdapter):
         Symbols must use Binance format (e.g. "BTCUSDT").
         Failed lookups are silently omitted.
         """
-        import requests
         from concurrent.futures import ThreadPoolExecutor
+
+        import requests
 
         def _fetch_one(symbol: str) -> tuple[str, dict[str, float] | None]:
             try:
@@ -417,6 +419,7 @@ class BinanceBrokerAdapter(BrokerAdapter):
 # Paper (dev / crypto / no-broker)
 # ---------------------------------------------------------------------------
 
+
 class PaperBrokerAdapter(BrokerAdapter):
     """No-op adapter for paper trading, local dev, and crypto (no live orders).
 
@@ -433,8 +436,9 @@ class PaperBrokerAdapter(BrokerAdapter):
     def is_paper(self) -> bool:
         return True
 
-    def place_order(self, symbol, side, quantity, tag, price=0.0,
-                    order_type="MARKET", intraday=True) -> str:
+    def place_order(
+        self, symbol, side, quantity, tag, price=0.0, order_type="MARKET", intraday=True
+    ) -> str:
         raise AssertionError(
             "PaperBrokerAdapter.place_order should never be called. "
             "The OrderExecutor must handle paper trades before reaching the broker."
@@ -451,12 +455,13 @@ class PaperBrokerAdapter(BrokerAdapter):
         return self._balance
 
     def refresh_auth(self) -> None:
-        pass   # no auth for paper mode
+        pass  # no auth for paper mode
 
 
 # ---------------------------------------------------------------------------
 # Factory
 # ---------------------------------------------------------------------------
+
 
 def get_broker_adapter() -> BrokerAdapter:
     """Return the appropriate :class:`BrokerAdapter` based on settings.
@@ -482,6 +487,7 @@ def get_broker_adapter() -> BrokerAdapter:
 
     if provider == "kite":
         from kiteconnect import KiteConnect
+
         kite = KiteConnect(api_key=settings.kite_api_key)
         if settings.kite_access_token:
             kite.set_access_token(settings.kite_access_token)

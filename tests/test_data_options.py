@@ -1,9 +1,8 @@
 """Tests for data/options_scraper.py — OptionsPCRScraper."""
+
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock
 
 from data.options_scraper import OptionsPCRScraper
 

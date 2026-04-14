@@ -1,18 +1,16 @@
 """Tests for signals/filters.py (EarningsFilter) and signals/exit_model.py (ExitModel)."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pandas as pd
-import pytest
-
-from signals.filters import EarningsFilter
 from signals.exit_model import ExitModel, PositionContext
-
+from signals.filters import EarningsFilter
 
 # ---------------------------------------------------------------------------
 # EarningsFilter
 # ---------------------------------------------------------------------------
+
 
 class TestEarningsFilter:
     """EarningsFilter is always disabled by default (earnings_filter_enabled=False)."""
@@ -32,8 +30,10 @@ class TestEarningsFilter:
         mock_settings.earnings_filter_enabled = False
         mock_redis = MagicMock()
 
-        with patch("signals.filters.settings", mock_settings), \
-             patch("data.store.get_redis", return_value=mock_redis):
+        with (
+            patch("signals.filters.settings", mock_settings),
+            patch("data.store.get_redis", return_value=mock_redis),
+        ):
             EarningsFilter().is_blackout("TCS")
 
         mock_redis.get.assert_not_called()
@@ -45,21 +45,26 @@ class TestEarningsFilter:
         mock_redis = MagicMock()
         mock_redis.get.return_value = None
 
-        with patch("signals.filters.settings", mock_settings), \
-             patch("data.store.get_redis", return_value=mock_redis):
+        with (
+            patch("signals.filters.settings", mock_settings),
+            patch("data.store.get_redis", return_value=mock_redis),
+        ):
             result = EarningsFilter().is_blackout("INFY")
 
         assert result is False
 
     def test_enabled_with_blackout_flag_returns_true(self):
         from datetime import date
+
         mock_settings = MagicMock()
         mock_settings.earnings_filter_enabled = True
         mock_redis = MagicMock()
         mock_redis.get.return_value = date.today().isoformat().encode()  # today = blackout
 
-        with patch("signals.filters.settings", mock_settings), \
-             patch("data.store.get_redis", return_value=mock_redis):
+        with (
+            patch("signals.filters.settings", mock_settings),
+            patch("data.store.get_redis", return_value=mock_redis),
+        ):
             result = EarningsFilter().is_blackout("INFY")
 
         assert result is True
@@ -70,8 +75,10 @@ class TestEarningsFilter:
         mock_redis = MagicMock()
         mock_redis.get.return_value = b"2020-01-01"  # far in the past
 
-        with patch("signals.filters.settings", mock_settings), \
-             patch("data.store.get_redis", return_value=mock_redis):
+        with (
+            patch("signals.filters.settings", mock_settings),
+            patch("data.store.get_redis", return_value=mock_redis),
+        ):
             result = EarningsFilter().is_blackout("HDFCBANK")
 
         assert result is False
@@ -83,8 +90,10 @@ class TestEarningsFilter:
         mock_redis = MagicMock()
         mock_redis.get.side_effect = Exception("connection error")
 
-        with patch("signals.filters.settings", mock_settings), \
-             patch("data.store.get_redis", return_value=mock_redis):
+        with (
+            patch("signals.filters.settings", mock_settings),
+            patch("data.store.get_redis", return_value=mock_redis),
+        ):
             result = EarningsFilter().is_blackout("WIPRO")
 
         assert result is False
@@ -93,6 +102,7 @@ class TestEarningsFilter:
 # ---------------------------------------------------------------------------
 # ExitModel
 # ---------------------------------------------------------------------------
+
 
 class TestExitModel:
     def _make_context(

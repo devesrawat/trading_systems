@@ -4,11 +4,12 @@ Sentiment pipeline orchestrator.
 fetch news → FinBERT score → Redis cache → TimescaleDB
 Runs every 30 minutes during NSE market hours (9:15–15:30 IST).
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import structlog
 from sqlalchemy import text
@@ -36,12 +37,13 @@ _INSERT_SQL = text("""
 # DB helpers (module-level so tests can patch them easily)
 # ---------------------------------------------------------------------------
 
+
 def _write_scores(scores: dict[str, float], headline_counts: dict[str, int] | None = None) -> None:
     """Bulk-insert sentiment scores into TimescaleDB."""
     if not scores:
         return
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     rows = [
         {
             "time": now,
@@ -78,6 +80,7 @@ def _fetch_latest_score_from_db(symbol: str) -> float | None:
 # ---------------------------------------------------------------------------
 # SentimentPipeline
 # ---------------------------------------------------------------------------
+
 
 class SentimentPipeline:
     """
@@ -199,9 +202,11 @@ class SentimentPipeline:
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_market_hours() -> bool:
     """Return True if current IST time is within NSE normal market hours."""
     from zoneinfo import ZoneInfo
+
     now_ist = datetime.now(tz=ZoneInfo("Asia/Kolkata"))
     open_time = now_ist.replace(
         hour=_MARKET_OPEN_HOUR, minute=_MARKET_OPEN_MIN, second=0, microsecond=0
@@ -215,6 +220,7 @@ def _is_market_hours() -> bool:
 # ---------------------------------------------------------------------------
 # LLM macro briefing
 # ---------------------------------------------------------------------------
+
 
 class LLMSentimentEngine:
     """
@@ -262,8 +268,10 @@ class LLMSentimentEngine:
             )
 
             sentiment_label = (
-                "🟢 Positive" if agg_score > 0.15
-                else "🔴 Negative" if agg_score < -0.15
+                "🟢 Positive"
+                if agg_score > 0.15
+                else "🔴 Negative"
+                if agg_score < -0.15
                 else "⚪ Neutral"
             )
 
@@ -280,6 +288,7 @@ class LLMSentimentEngine:
             try:
                 from data.redis_keys import RedisKeys
                 from data.store import get_redis
+
                 get_redis().set(RedisKeys.MACRO_BRIEFING, briefing, ex=86400)
                 log.info("macro_briefing_saved", score=round(agg_score, 3))
             except Exception as exc:
@@ -297,6 +306,7 @@ class LLMSentimentEngine:
         try:
             from data.redis_keys import RedisKeys
             from data.store import get_redis
+
             raw = get_redis().get(RedisKeys.MACRO_BRIEFING)
             if raw:
                 return raw if isinstance(raw, str) else raw.decode()

@@ -4,10 +4,11 @@ Kite order placement, cancellation, and paper trading simulator.
 ALWAYS defaults to paper_mode=True. Live trading requires explicit opt-in
 after 200+ paper trades and go-live checklist completion.
 """
+
 from __future__ import annotations
 
 import uuid
-from enum import Enum
+from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 import structlog
@@ -25,16 +26,16 @@ _VALID_SIDES = frozenset({"BUY", "SELL"})
 _LARGE_ORDER_THRESHOLD_INR = 50_000
 
 
-class SlippageTier(str, Enum):
+class SlippageTier(StrEnum):
     LARGE_CAP = "large_cap"
     MID_CAP = "mid_cap"
     SMALL_CAP = "small_cap"
 
 
 _SLIPPAGE_MAP = {
-    SlippageTier.LARGE_CAP: 0.0005,   # 0.05%
-    SlippageTier.MID_CAP: 0.0012,     # 0.12%
-    SlippageTier.SMALL_CAP: 0.0020,   # 0.20%
+    SlippageTier.LARGE_CAP: 0.0005,  # 0.05%
+    SlippageTier.MID_CAP: 0.0012,  # 0.12%
+    SlippageTier.SMALL_CAP: 0.0020,  # 0.20%
 }
 
 _PAPER_ORDER_PREFIX = "PAPER"
@@ -52,7 +53,7 @@ class OrderExecutor:
     def __init__(
         self,
         broker: BrokerAdapter,
-        circuit_breaker: "CircuitBreaker",
+        circuit_breaker: CircuitBreaker,
     ) -> None:
         self._broker = broker
         self._cb = circuit_breaker
@@ -153,7 +154,9 @@ class OrderExecutor:
             order_type="LIMIT",
             intraday=intraday,
         )
-        write_live_trade(symbol, transaction_type, quantity, price=price, order_id=order_id, tag=tag)
+        write_live_trade(
+            symbol, transaction_type, quantity, price=price, order_id=order_id, tag=tag
+        )
         log.info("limit_order_placed", order_id=order_id, symbol=symbol, price=price)
         return order_id
 
@@ -197,17 +200,14 @@ class OrderExecutor:
 
     def _validate_order(self, transaction_type: str, quantity: int) -> None:
         if transaction_type not in _VALID_SIDES:
-            raise ValueError(
-                f"Invalid transaction_type '{transaction_type}'. Must be BUY or SELL."
-            )
+            raise ValueError(f"Invalid transaction_type '{transaction_type}'. Must be BUY or SELL.")
         if quantity <= 0:
             raise ValueError(f"quantity must be > 0, got {quantity}")
 
     def _check_circuit_breaker(self) -> None:
         if self._cb.is_halted():
             raise RuntimeError(
-                "Order blocked — circuit breaker is active. "
-                f"Reason: {self._cb._halt_reason}"
+                f"Order blocked — circuit breaker is active. Reason: {self._cb._halt_reason}"
             )
 
 
@@ -243,15 +243,18 @@ def _write_paper_trade(
 ) -> None:
     engine = get_engine()
     with engine.connect() as conn:
-        conn.execute(_INSERT_PAPER_TRADE, {
-            "symbol": symbol,
-            "side": side,
-            "quantity": quantity,
-            "price": price,
-            "signal_prob": signal_prob,
-            "position_size_inr": position_size_inr,
-            "tag": tag,
-        })
+        conn.execute(
+            _INSERT_PAPER_TRADE,
+            {
+                "symbol": symbol,
+                "side": side,
+                "quantity": quantity,
+                "price": price,
+                "signal_prob": signal_prob,
+                "position_size_inr": position_size_inr,
+                "tag": tag,
+            },
+        )
         conn.commit()
     log.debug("paper_trade_written", symbol=symbol, side=side, qty=quantity)
 
@@ -270,16 +273,19 @@ def write_live_trade(
     """Write a confirmed live (non-paper) order to the live_trades audit table."""
     engine = get_engine()
     with engine.connect() as conn:
-        conn.execute(_INSERT_LIVE_TRADE, {
-            "symbol": symbol,
-            "side": side,
-            "quantity": quantity,
-            "price": price,
-            "order_id": order_id,
-            "signal_prob": signal_prob,
-            "position_size_inr": position_size_inr,
-            "tag": tag,
-            "strategy_version": strategy_version,
-        })
+        conn.execute(
+            _INSERT_LIVE_TRADE,
+            {
+                "symbol": symbol,
+                "side": side,
+                "quantity": quantity,
+                "price": price,
+                "order_id": order_id,
+                "signal_prob": signal_prob,
+                "position_size_inr": position_size_inr,
+                "tag": tag,
+                "strategy_version": strategy_version,
+            },
+        )
         conn.commit()
     log.info("live_trade_written", order_id=order_id, symbol=symbol, side=side, qty=quantity)

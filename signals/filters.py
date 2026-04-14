@@ -12,6 +12,7 @@ Usage:
     if f.is_blackout(symbol):
         return  # skip signal
 """
+
 from __future__ import annotations
 
 import structlog
@@ -44,6 +45,7 @@ class EarningsFilter:
         if enabled is None:
             try:
                 import signals.filters as _m
+
                 self._enabled = getattr(_m.settings, "earnings_filter_enabled", _ENABLED_BY_DEFAULT)
             except Exception:
                 self._enabled = _ENABLED_BY_DEFAULT
@@ -75,7 +77,8 @@ class EarningsFilter:
 
         Key format: trading:earnings:{symbol}  →  "YYYY-MM-DD"
         """
-        from datetime import date, timedelta
+        from datetime import date
+
         from data.store import get_redis
 
         r = get_redis()
@@ -100,6 +103,7 @@ class EarningsFilter:
         """
         try:
             from data.store import get_redis
+
             r = get_redis()
             for symbol, date_str in dates.items():
                 r.set(f"trading:earnings:{symbol}", date_str, ex=86400 * 7)

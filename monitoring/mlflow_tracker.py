@@ -10,6 +10,7 @@ ModelDriftMonitor compares the rolling live win rate against
 the backtest baseline. Drift score > 0.3 triggers a Telegram alert
 and flags the model for retraining.
 """
+
 from __future__ import annotations
 
 import mlflow
@@ -17,7 +18,7 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_BASELINE_WIN_RATE = 0.58   # expected from backtest
+_BASELINE_WIN_RATE = 0.58  # expected from backtest
 
 
 class ModelDriftMonitor:
@@ -79,6 +80,7 @@ class ModelDriftMonitor:
     ) -> str:
         """Register a trained model artifact and set its stage."""
         from signals.model import _MODEL_NAME_PREFIX
+
         model_name = f"{_MODEL_NAME_PREFIX}_{segment.lower()}"
         model_uri = f"runs:/{run_id}/model"
         mv = mlflow.register_model(model_uri=model_uri, name=model_name)
@@ -93,6 +95,7 @@ class ModelDriftMonitor:
     def promote_to_production(self, segment: str, version: str) -> None:
         """Promote a Staging model version to Production."""
         from signals.model import _MODEL_NAME_PREFIX
+
         model_name = f"{_MODEL_NAME_PREFIX}_{segment.lower()}"
         self._client.transition_model_version_stage(
             name=model_name,

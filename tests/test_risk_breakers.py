@@ -1,19 +1,18 @@
 """Unit tests for risk/breakers.py — TDD RED phase. Mocks Redis."""
-from unittest.mock import MagicMock, call, patch
 
-import pytest
+from unittest.mock import MagicMock, patch
 
 from risk.breakers import CircuitBreaker
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 def _make_breaker(**kwargs) -> tuple[CircuitBreaker, MagicMock]:
     with patch("risk.breakers.get_redis") as mock_get_redis:
         mock_redis = MagicMock()
-        mock_redis.get.return_value = None   # no persisted state
+        mock_redis.get.return_value = None  # no persisted state
         mock_get_redis.return_value = mock_redis
         cb = CircuitBreaker(**kwargs)
     return cb, mock_redis
@@ -22,6 +21,7 @@ def _make_breaker(**kwargs) -> tuple[CircuitBreaker, MagicMock]:
 # ---------------------------------------------------------------------------
 # Initialisation
 # ---------------------------------------------------------------------------
+
 
 class TestCircuitBreakerInit:
     def test_default_limits(self):
@@ -42,6 +42,7 @@ class TestCircuitBreakerInit:
 
     def test_loads_persisted_state_from_redis(self):
         import json
+
         state = {
             "halted": True,
             "reason": "Test halt",
@@ -62,6 +63,7 @@ class TestCircuitBreakerInit:
 # check() — normal operation
 # ---------------------------------------------------------------------------
 
+
 class TestCheck:
     def test_allows_trade_when_healthy(self):
         cb, _ = _make_breaker()
@@ -74,9 +76,8 @@ class TestCheck:
 
     def test_blocks_when_halted(self):
         cb, _ = _make_breaker()
-        with patch.object(cb, "_persist_state"):
-            with patch("risk.breakers.TelegramAlerter"):
-                cb.halt("manual test")
+        with patch.object(cb, "_persist_state"), patch("risk.breakers.TelegramAlerter"):
+            cb.halt("manual test")
         allowed, reason = cb.check(current_capital=100_000.0)
         assert not allowed
         assert reason is not None
@@ -128,6 +129,7 @@ class TestCheck:
 # halt() — one-way latch
 # ---------------------------------------------------------------------------
 
+
 class TestHalt:
     def test_halt_sets_is_halted(self):
         cb, _ = _make_breaker()
@@ -137,8 +139,10 @@ class TestHalt:
 
     def test_halt_persists_state(self):
         cb, _ = _make_breaker()
-        with patch.object(cb, "_persist_state") as mock_persist, \
-             patch("risk.breakers.TelegramAlerter"):
+        with (
+            patch.object(cb, "_persist_state") as mock_persist,
+            patch("risk.breakers.TelegramAlerter"),
+        ):
             cb.halt("drawdown exceeded")
         mock_persist.assert_called()
 
@@ -159,6 +163,7 @@ class TestHalt:
 # ---------------------------------------------------------------------------
 # reset_daily / reset_weekly
 # ---------------------------------------------------------------------------
+
 
 class TestResets:
     def test_reset_daily_updates_start_capital(self):
@@ -202,6 +207,7 @@ class TestResets:
 # manual_reset (CLI only — clears halt)
 # ---------------------------------------------------------------------------
 
+
 class TestManualReset:
     def test_manual_reset_clears_halt(self):
         cb, _ = _make_breaker()
@@ -227,9 +233,11 @@ class TestManualReset:
 # Redis state persistence
 # ---------------------------------------------------------------------------
 
+
 class TestStatePersistence:
     def test_persist_state_writes_to_redis(self):
         import json
+
         cb, mock_redis = _make_breaker()
         with patch("risk.breakers.get_redis", return_value=mock_redis):
             cb._persist_state()
@@ -246,6 +254,7 @@ class TestStatePersistence:
 # _write_circuit_event (DB audit trail)
 # ---------------------------------------------------------------------------
 
+
 class TestWriteCircuitEvent:
     def _mock_engine(self):
         mock_conn = MagicMock()
@@ -258,9 +267,11 @@ class TestWriteCircuitEvent:
     def test_halt_writes_circuit_event(self):
         cb, _ = _make_breaker()
         engine, conn = self._mock_engine()
-        with patch.object(cb, "_persist_state"), \
-             patch("risk.breakers.TelegramAlerter"), \
-             patch("risk.breakers.get_engine", return_value=engine):
+        with (
+            patch.object(cb, "_persist_state"),
+            patch("risk.breakers.TelegramAlerter"),
+            patch("risk.breakers.get_engine", return_value=engine),
+        ):
             cb.halt("daily drawdown exceeded")
         conn.execute.assert_called_once()
         conn.commit.assert_called_once()
@@ -268,30 +279,38 @@ class TestWriteCircuitEvent:
     def test_reset_daily_writes_circuit_event(self):
         cb, _ = _make_breaker()
         engine, conn = self._mock_engine()
-        with patch.object(cb, "_persist_state"), \
-             patch("risk.breakers.get_engine", return_value=engine):
+        with (
+            patch.object(cb, "_persist_state"),
+            patch("risk.breakers.get_engine", return_value=engine),
+        ):
             cb.reset_daily(current_capital=100_000.0)
         conn.execute.assert_called_once()
 
     def test_reset_weekly_writes_circuit_event(self):
         cb, _ = _make_breaker()
         engine, conn = self._mock_engine()
-        with patch.object(cb, "_persist_state"), \
-             patch("risk.breakers.get_engine", return_value=engine):
+        with (
+            patch.object(cb, "_persist_state"),
+            patch("risk.breakers.get_engine", return_value=engine),
+        ):
             cb.reset_weekly(current_capital=95_000.0)
         conn.execute.assert_called_once()
 
     def test_manual_reset_writes_circuit_event(self):
         cb, _ = _make_breaker()
         engine, conn = self._mock_engine()
-        with patch.object(cb, "_persist_state"), \
-             patch("risk.breakers.get_engine", return_value=engine):
+        with (
+            patch.object(cb, "_persist_state"),
+            patch("risk.breakers.get_engine", return_value=engine),
+        ):
             cb.manual_reset(current_capital=100_000.0)
         conn.execute.assert_called_once()
 
     def test_db_error_does_not_propagate(self):
         """DB write failure must never crash the trading loop."""
         cb, _ = _make_breaker()
-        with patch.object(cb, "_persist_state"), \
-             patch("risk.breakers.get_engine", side_effect=Exception("DB down")):
+        with (
+            patch.object(cb, "_persist_state"),
+            patch("risk.breakers.get_engine", side_effect=Exception("DB down")),
+        ):
             cb._write_circuit_event("halt", "test")  # must not raise

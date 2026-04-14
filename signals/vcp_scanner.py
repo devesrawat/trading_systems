@@ -15,11 +15,12 @@ Minervini criteria enforced
   - Final contraction range < 10 %
   - Volume dry-up in the last 10 bars vs prior 10
 """
+
 from __future__ import annotations
 
 import os
 from concurrent.futures import ProcessPoolExecutor, as_completed
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import Any
 
 import pandas as pd
@@ -41,6 +42,7 @@ _MIN_BARS = 200
 # ---------------------------------------------------------------------------
 # Multi-symbol DB fetch  (one query, not 500)
 # ---------------------------------------------------------------------------
+
 
 def fetch_ohlcv_bulk(
     symbols: list[str],
@@ -70,8 +72,8 @@ def fetch_ohlcv_bulk(
             query,
             conn,
             params={
-                "symbols":   symbols,
-                "interval":  interval,
+                "symbols": symbols,
+                "interval": interval,
                 "from_date": from_date,
             },
             parse_dates=["time"],
@@ -90,26 +92,27 @@ def fetch_ohlcv_bulk(
 # Per-symbol VCP logic  (runs inside worker processes)
 # ---------------------------------------------------------------------------
 
+
 def _clean(df: pd.DataFrame) -> pd.DataFrame | None:
     """Apply the standard OHLCV preparation pipeline."""
     return prepare_ohlcv(df, interval="day", min_bars=_MIN_BARS)
 
 
 def _trend_template(df: pd.DataFrame) -> bool:
-    close   = df["close"]
-    sma150  = close.rolling(150).mean()
-    sma200  = close.rolling(200).mean()
-    cur     = close.iloc[-1]
-    high52  = close.rolling(252).max().iloc[-1]
-    low52   = close.rolling(252).min().iloc[-1]
+    close = df["close"]
+    sma150 = close.rolling(150).mean()
+    sma200 = close.rolling(200).mean()
+    cur = close.iloc[-1]
+    high52 = close.rolling(252).max().iloc[-1]
+    low52 = close.rolling(252).min().iloc[-1]
 
     return (
-        cur > sma150.iloc[-1]           # above 150-day MA
-        and cur > sma200.iloc[-1]       # above 200-day MA
-        and sma150.iloc[-1] > sma200.iloc[-1]   # 150 above 200
+        cur > sma150.iloc[-1]  # above 150-day MA
+        and cur > sma200.iloc[-1]  # above 200-day MA
+        and sma150.iloc[-1] > sma200.iloc[-1]  # 150 above 200
         and sma200.iloc[-1] > sma200.iloc[-22]  # 200-day rising 1 month
-        and cur >= high52 * 0.75        # within 25 % of 52-week high
-        and cur >= low52  * 1.30        # ≥ 30 % above 52-week low
+        and cur >= high52 * 0.75  # within 25 % of 52-week high
+        and cur >= low52 * 1.30  # ≥ 30 % above 52-week low
     )
 
 
@@ -117,10 +120,10 @@ def _swing_ranges(df: pd.DataFrame, lookback: int = 60) -> list[float]:
     """Return % high-to-low range for each swing pivot pair in the base."""
     base = df.tail(lookback)
     high = base["high"]
-    low  = base["low"]
+    low = base["low"]
 
     ph_mask = (high.shift(1) < high) & (high.shift(-1) < high)
-    pl_mask = (low.shift(1)  > low)  & (low.shift(-1)  > low)
+    pl_mask = (low.shift(1) > low) & (low.shift(-1) > low)
 
     ph_idx = high[ph_mask].index.tolist()
     pl_idx = low[pl_mask].index.tolist()
@@ -168,28 +171,29 @@ def _scan_one(symbol: str, ohlcv_records: list[dict]) -> dict[str, Any] | None:
 
     ranges = _swing_ranges(df, lookback=60)
     contractions = sum(1 for i in range(1, len(ranges)) if ranges[i] < ranges[i - 1])
-    final_range  = ranges[-1] if ranges else float("inf")
+    final_range = ranges[-1] if ranges else float("inf")
 
     if contractions < 2 or final_range >= 10.0:
         return None
 
     current = float(df["close"].iloc[-1])
-    pivot   = _pivot_buy_point(df)
+    pivot = _pivot_buy_point(df)
 
     return {
-        "symbol":                symbol,
-        "current_price":         current,
-        "pivot_buy":             pivot,
+        "symbol": symbol,
+        "current_price": current,
+        "pivot_buy": pivot,
         "distance_to_pivot_pct": round((pivot - current) / current * 100, 2),
-        "contractions":          contractions,
-        "swing_ranges":          ranges,
-        "volume_dry_up":         _volume_dries_up(df),
+        "contractions": contractions,
+        "swing_ranges": ranges,
+        "volume_dry_up": _volume_dries_up(df),
     }
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def scan_vcp_universe(
     symbols: list[str],
@@ -245,12 +249,9 @@ def scan_vcp_universe(
     results: list[dict[str, Any]] = []
     with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = {
-            pool.submit(_scan_one, sym, records): sym
-            for sym, records in symbol_groups.items()
+            pool.submit(_scan_one, sym, records): sym for sym, records in symbol_groups.items()
         }
-        done = 0
-        for future in as_completed(futures):
-            done += 1
+        for done, future in enumerate(as_completed(futures), 1):
             result = future.result()
             if result is not None:
                 results.append(result)

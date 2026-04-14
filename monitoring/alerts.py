@@ -4,11 +4,11 @@ Telegram alerter for circuit breakers, daily summaries, and system errors.
 All methods are synchronous wrappers — internally runs async Telegram Bot
 in a temporary event loop so callers don't need to be async.
 """
+
 from __future__ import annotations
 
 import asyncio
 import time
-from typing import Optional
 
 import structlog
 
@@ -29,12 +29,13 @@ class TelegramAlerter:
 
     def __init__(
         self,
-        bot_token: Optional[str] = None,
-        chat_id: Optional[str] = None,
+        bot_token: str | None = None,
+        chat_id: str | None = None,
         max_retries: int = 3,
     ) -> None:
         if bot_token is None or chat_id is None:
             from config.settings import settings
+
             bot_token = bot_token or settings.telegram_bot_token
             chat_id = chat_id or settings.telegram_chat_id
 
@@ -68,7 +69,7 @@ class TelegramAlerter:
             except Exception as exc:
                 log.warning("telegram_send_failed", attempt=attempt + 1, error=str(exc))
                 if attempt < self._max_retries - 1:
-                    time.sleep(2 ** attempt)
+                    time.sleep(2**attempt)
 
     # ------------------------------------------------------------------
     # Formatted alert helpers
@@ -82,6 +83,7 @@ class TelegramAlerter:
     ) -> None:
         from datetime import datetime
         from zoneinfo import ZoneInfo
+
         now = datetime.now(tz=ZoneInfo("Asia/Kolkata")).strftime("%H:%M IST")
         msg = (
             "🔴 <b>CIRCUIT BREAKER TRIGGERED</b>\n"
@@ -121,9 +123,5 @@ class TelegramAlerter:
         self.send(msg)
 
     def alert_system_error(self, module: str, error_msg: str) -> None:
-        msg = (
-            "🔧 <b>SYSTEM ERROR</b>\n"
-            f"Module: <code>{module}</code>\n"
-            f"Error: {error_msg[:200]}"
-        )
+        msg = f"🔧 <b>SYSTEM ERROR</b>\nModule: <code>{module}</code>\nError: {error_msg[:200]}"
         self.send(msg)

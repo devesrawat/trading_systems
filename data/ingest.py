@@ -6,9 +6,9 @@ Responsibilities:
   - Stream live ticks via KiteTicker WebSocket and cache in Redis
   - Handle daily access-token refresh
 """
+
 from __future__ import annotations
 
-import time
 from datetime import date, datetime
 from typing import Callable
 
@@ -199,6 +199,7 @@ class KiteIngestor:
 # NSE market-data scraper (Phase 1 — M1 spec)
 # ---------------------------------------------------------------------------
 
+
 class NSEDataScraper:
     """
     Fetches NSE-specific data not available through broker APIs:
@@ -213,16 +214,16 @@ class NSEDataScraper:
 
     def _get_session(self):  # type: ignore[return]
         import requests
+
         if self._session is None:
             s = requests.Session()
-            s.headers.update({
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36"
-                ),
-                "Accept-Language": "en-US,en;q=0.9",
-                "Referer": self.BASE,
-            })
+            s.headers.update(
+                {
+                    "User-Agent": ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"),
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Referer": self.BASE,
+                }
+            )
             s.get(self.BASE, timeout=10)  # establish cookies
             self._session = s
         return self._session
@@ -259,6 +260,7 @@ class NSEDataScraper:
 # Crypto metrics collector (Phase 1 — M1 spec)
 # ---------------------------------------------------------------------------
 
+
 class CryptoMetricsCollector:
     """
     Collects on-chain and derivatives metrics for BTC/ETH/SOL.
@@ -271,12 +273,14 @@ class CryptoMetricsCollector:
     def get_fear_greed(self) -> int:
         """Return 0-100 Fear & Greed index. 0 = extreme fear, 100 = extreme greed."""
         import requests
+
         resp = requests.get(self.FEAR_GREED_URL, timeout=5)
         return int(resp.json()["data"][0]["value"])
 
     def get_binance_funding_rate(self, symbol: str) -> float:
         """Return current 8-hour funding rate from Binance futures."""
         import requests
+
         resp = requests.get(
             "https://fapi.binance.com/fapi/v1/fundingRate",
             params={"symbol": f"{symbol}USDT", "limit": 1},
@@ -288,6 +292,7 @@ class CryptoMetricsCollector:
     def get_binance_open_interest(self, symbol: str) -> float:
         """Return open interest in USDT from Binance futures."""
         import requests
+
         resp = requests.get(
             "https://fapi.binance.com/fapi/v1/openInterest",
             params={"symbol": f"{symbol}USDT"},

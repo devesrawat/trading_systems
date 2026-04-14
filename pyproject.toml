@@ -53,10 +53,22 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    # Testing
     "pytest>=8.1.0",
     "pytest-asyncio>=0.23.5",
     "pytest-cov>=5.0.0",
     "pytest-mock>=3.14.0",
+    # Linting / formatting
+    "ruff>=0.9.0",
+    # Type checking
+    "mypy>=1.14.0",
+    "types-redis>=4.6.0",
+    "types-PyYAML>=6.0.12",
+    # Security
+    "bandit[toml]>=1.8.0",
+    "pip-audit>=2.8.0",
+    # Git hooks
+    "pre-commit>=4.1.0",
 ]
 
 [project.optional-dependencies]
@@ -86,3 +98,85 @@ omit = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["data", "signals", "llm", "risk", "execution", "backtest", "options", "orchestrator", "monitoring"]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter + formatter
+# ---------------------------------------------------------------------------
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (undefined names, unused imports)
+    "I",    # isort (import order)
+    "UP",   # pyupgrade (modernise syntax)
+    "B",    # flake8-bugbear (common bugs)
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "PIE",  # flake8-pie (misc improvements)
+    "RUF",  # Ruff-native rules
+]
+ignore = [
+    "E501",   # line-too-long — handled by the formatter
+    "UP007",  # Use X | Y — keep Optional[] for Pydantic v1 compat
+    "UP035",  # typing module deprecated — some third-party stubs still need it
+    "SIM108", # ternary operator — can hurt readability in complex conditions
+    "B008",   # function-call-in-default-argument — valid with Pydantic validators
+    "RUF001", # string contains ambiguous unicode — intentional in financial literals (×, ₹)
+    "RUF002", # docstring contains ambiguous unicode — intentional in math/finance docs (×, –)
+    "RUF003", # comment contains ambiguous unicode — intentional in math/finance comments
+    "RUF012", # mutable class vars — handled by dataclass/pydantic
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "B011",   # assert False can be used as TODO marker
+    "B017",   # pytest.raises with no match arg
+    "S101",   # assert in tests is fine
+    "F841",   # unused local vars common in test setup (mock captures)
+    "RUF059", # unpacked variables not used (mock return value capturing)
+    "B905",   # zip strict= not required in tests
+]
+"backtest/**" = [
+    "S311",   # random in simulations is intentional
+    "E402",   # module-level imports after sys.path manipulation
+]
+"notebooks/**" = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+docstring-code-format = true
+
+# ---------------------------------------------------------------------------
+# Mypy — type checking
+# ---------------------------------------------------------------------------
+
+[tool.mypy]
+python_version = "3.13"
+ignore_missing_imports = true
+warn_unused_configs = true
+warn_return_any = false        # too noisy with untyped third-party libs
+disallow_untyped_defs = false  # incrementally adopted — enable per-module later
+exclude = [
+    "migrations/",
+    "notebooks/",
+    "data/notebooks/",
+]
+
+# ---------------------------------------------------------------------------
+# Bandit — security linting
+# ---------------------------------------------------------------------------
+
+[tool.bandit]
+exclude_dirs = ["tests", "notebooks", "migrations", ".venv"]
+skips = [
+    "B101",  # assert_used — fine in test helpers
+    "B110",  # try_except_pass — intentional in monitoring/alerting code for resilience
+    "B311",  # random — intentional in backtests / simulations
+    "B603",  # subprocess_without_shell_equals_true — not used here
+    "B607",  # start_process_with_partial_path — not used here
+]

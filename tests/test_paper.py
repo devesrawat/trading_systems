@@ -1,9 +1,10 @@
 """Unit tests for execution/paper.py — TDD RED phase."""
+
 from __future__ import annotations
 
 import pytest
 
-from execution.paper import PaperTrader, PaperPosition, InsufficientCapitalError
+from execution.paper import InsufficientCapitalError, PaperPosition, PaperTrader
 
 
 class TestPaperTraderInit:
@@ -131,7 +132,7 @@ class TestPaperTraderUnrealizedPnL:
         pt.buy("HCLTECH", qty=20, price=1_200.0)
         pt.sell("HCLTECH", qty=10, price=1_250.0, current_price=1_250.0)
         pnl = pt.get_pnl(current_prices={"HCLTECH": 1_300.0})
-        expected_realized = (1_250 - 1_200) * 10   # 500
+        expected_realized = (1_250 - 1_200) * 10  # 500
         expected_unrealized = (1_300 - 1_200) * 10  # 1000
         assert pnl["realized"] == pytest.approx(expected_realized)
         assert pnl["unrealized"] == pytest.approx(expected_unrealized)
@@ -165,7 +166,7 @@ class TestPaperTraderHistory:
         pt.buy("CIPLA", qty=1, price=1_000.0)
         pt.sell("CIPLA", qty=1, price=1_100.0, current_price=1_100.0)  # win
         pt.buy("CIPLA", qty=1, price=1_000.0)
-        pt.sell("CIPLA", qty=1, price=900.0, current_price=900.0)    # loss
+        pt.sell("CIPLA", qty=1, price=900.0, current_price=900.0)  # loss
         assert pt.win_rate() == pytest.approx(0.5)
 
     def test_win_rate_no_closed_trades_returns_zero(self):

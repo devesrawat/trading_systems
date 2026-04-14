@@ -4,6 +4,7 @@ XGBoost signal model — inference wrapper and MLflow registry integration.
 SignalModel   — load a trained model, run predictions, explain with SHAP
 ModelRegistry — fetch/register models via MLflow model registry
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -88,10 +89,7 @@ class SignalModel:
         importances = np.abs(shap_values[0])
         top_indices = np.argsort(importances)[::-1][:10]
 
-        return {
-            self.feature_names[i]: float(shap_values[0][i])
-            for i in top_indices
-        }
+        return {self.feature_names[i]: float(shap_values[0][i]) for i in top_indices}
 
     # ------------------------------------------------------------------
     # health check
@@ -109,14 +107,14 @@ class SignalModel:
         missing = set(self.feature_names) - set(features.columns)
         if missing:
             raise ValueError(
-                f"Missing feature columns for inference: {missing}. "
-                f"Expected: {self.feature_names}"
+                f"Missing feature columns for inference: {missing}. Expected: {self.feature_names}"
             )
 
 
 # ---------------------------------------------------------------------------
 # ModelRegistry
 # ---------------------------------------------------------------------------
+
 
 class ModelRegistry:
     """
@@ -145,8 +143,7 @@ class ModelRegistry:
 
         if not versions:
             raise RuntimeError(
-                f"No {stage} model found for '{model_name}'. "
-                "Train and register a model first."
+                f"No {stage} model found for '{model_name}'. Train and register a model first."
             )
 
         latest = versions[0]

@@ -8,6 +8,7 @@ gamma(S, K, T, r, sigma)              → float
 theta(S, K, T, r, sigma, option_type) → float  (per calendar day)
 compute_portfolio_delta(positions)    → float   (net delta in shares)
 """
+
 from __future__ import annotations
 
 import math

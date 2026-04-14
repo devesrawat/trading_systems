@@ -19,10 +19,11 @@ Delta Hedge
   If net portfolio delta > ±0.10, hedge by buying/selling the underlying
   to flatten delta within the threshold.
 """
+
 from __future__ import annotations
 
 import math
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import structlog
@@ -37,7 +38,7 @@ _IV_RANK_BUY_THRESHOLD = 0.30
 _DELTA_HEDGE_THRESHOLD = 0.10
 
 
-class SignalType(str, Enum):
+class SignalType(StrEnum):
     SELL_PREMIUM = "SELL_PREMIUM"
     BUY_PREMIUM = "BUY_PREMIUM"
 

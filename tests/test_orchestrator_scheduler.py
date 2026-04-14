@@ -1,7 +1,6 @@
 """Unit tests for orchestrator/scheduler.py — mocks APScheduler, no live jobs."""
-from unittest.mock import MagicMock, patch, call
 
-import pytest
+from unittest.mock import MagicMock, patch
 
 from orchestrator.scheduler import TradingScheduler
 
@@ -19,6 +18,7 @@ def _mock_system():
 # ---------------------------------------------------------------------------
 # Instantiation
 # ---------------------------------------------------------------------------
+
 
 class TestTradingSchedulerInit:
     def test_defaults_to_equity(self):
@@ -46,13 +46,16 @@ class TestTradingSchedulerInit:
 # Job registration
 # ---------------------------------------------------------------------------
 
+
 class TestJobRegistration:
     def _start(self, market_type: str) -> tuple[TradingScheduler, MagicMock]:
         s = _mock_system()
         sched = TradingScheduler(s, market_type=market_type)
-        with patch.object(sched._scheduler, "start"):
-            with patch.object(sched._scheduler, "get_jobs", return_value=[MagicMock()]):
-                sched.start()
+        with (
+            patch.object(sched._scheduler, "start"),
+            patch.object(sched._scheduler, "get_jobs", return_value=[MagicMock()]),
+        ):
+            sched.start()
         return sched, s
 
     def test_equity_registers_equity_jobs(self):
@@ -94,6 +97,7 @@ class TestJobRegistration:
 # Stop
 # ---------------------------------------------------------------------------
 
+
 class TestSchedulerStop:
     def test_stop_shuts_down_scheduler(self):
         s = _mock_system()
@@ -106,6 +110,7 @@ class TestSchedulerStop:
 # ---------------------------------------------------------------------------
 # _safe wrapper
 # ---------------------------------------------------------------------------
+
 
 class TestSafeWrapper:
     def test_safe_calls_wrapped_function(self):
@@ -124,7 +129,7 @@ class TestSafeWrapper:
         fn = MagicMock(__name__="boom_fn")
         fn.side_effect = RuntimeError("kaboom")
         wrapped = sched._safe(fn)
-        wrapped()   # must NOT raise
+        wrapped()  # must NOT raise
 
     def test_safe_preserves_function_name(self):
         s = _mock_system()

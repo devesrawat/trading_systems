@@ -18,14 +18,15 @@ Exceptions
 ----------
 InsufficientCapitalError — raised when a buy exceeds available_capital
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import structlog
-from zoneinfo import ZoneInfo
 
 log = structlog.get_logger(__name__)
 
@@ -46,8 +47,7 @@ class PaperPosition:
 
     def __repr__(self) -> str:
         return (
-            f"PaperPosition(symbol={self.symbol!r}, qty={self.qty}, "
-            f"avg_price={self.avg_price:.2f})"
+            f"PaperPosition(symbol={self.symbol!r}, qty={self.qty}, avg_price={self.avg_price:.2f})"
         )
 
     def market_value(self, current_price: float) -> float:
@@ -67,7 +67,7 @@ class PaperTrader:
 
     def __init__(self, capital: float) -> None:
         self._initial_capital = capital
-        self.capital = capital            # total allocated capital
+        self.capital = capital  # total allocated capital
         self.available_capital = capital  # uninvested cash
         self._positions: dict[str, PaperPosition] = {}
         self._realized_pnl: float = 0.0
@@ -111,8 +111,13 @@ class PaperTrader:
 
         self.available_capital -= cost
         self._record_trade("BUY", symbol, qty, price)
-        log.info("paper_buy", symbol=symbol, qty=qty, price=price,
-                 available_capital=self.available_capital)
+        log.info(
+            "paper_buy",
+            symbol=symbol,
+            qty=qty,
+            price=price,
+            available_capital=self.available_capital,
+        )
 
     def sell(
         self,
@@ -134,9 +139,7 @@ class PaperTrader:
 
         pos = self._positions[symbol]
         if qty > pos.qty:
-            raise ValueError(
-                f"Cannot sell {qty} shares of {symbol} — only {pos.qty} held"
-            )
+            raise ValueError(f"Cannot sell {qty} shares of {symbol} — only {pos.qty} held")
 
         trade_pnl = (price - pos.avg_price) * qty
         self._realized_pnl += trade_pnl

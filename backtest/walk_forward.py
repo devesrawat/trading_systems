@@ -10,11 +10,10 @@ Protocol (Section 14):
   - Minimum 5 folds
   - Stress-test windows must be covered
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import timedelta
-from typing import Any
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -23,9 +22,7 @@ import structlog
 
 from backtest.costs import NSECostModel
 from backtest.metrics import (
-    calmar_ratio,
     max_drawdown,
-    print_tearsheet,
     profit_factor,
     sharpe_ratio,
     win_rate,
@@ -122,11 +119,13 @@ class WalkForwardBacktest:
         *df* must contain FEATURE_COLUMNS + 'label' + 'forward_return_5d'.
         Returns BacktestResults with per-fold metrics and aggregate stats.
         """
-        from signals.features import FEATURE_COLUMNS, LABEL_COLUMNS
+        from signals.features import FEATURE_COLUMNS
 
         features = [c for c in FEATURE_COLUMNS if c in df.columns]
         if "label" not in df.columns:
-            raise ValueError("DataFrame must contain 'label' column. Run build_features(include_labels=True).")
+            raise ValueError(
+                "DataFrame must contain 'label' column. Run build_features(include_labels=True)."
+            )
 
         trainer = WalkForwardTrainer(
             train_months=self.train_months,
@@ -149,6 +148,7 @@ class WalkForwardBacktest:
 
             # Train model on this fold's train window
             import mlflow
+
             mlflow.set_experiment("backtest_results")
             fold_trainer = WalkForwardTrainer(
                 train_months=self.train_months,
@@ -170,10 +170,16 @@ class WalkForwardBacktest:
 
             # Apply round-trip transaction costs
             net_returns = raw_returns.apply(
-                lambda r: r - self._cost_model.round_trip_cost(10_000, self._liquidity_tier) / 10_000
+                lambda r: (
+                    r - self._cost_model.round_trip_cost(10_000, self._liquidity_tier) / 10_000
+                )
             )
 
-            equity = (1 + net_returns).cumprod() * 100_000 if not net_returns.empty else pd.Series([100_000.0])
+            equity = (
+                (1 + net_returns).cumprod() * 100_000
+                if not net_returns.empty
+                else pd.Series([100_000.0])
+            )
 
             fold_result = FoldBacktestResult(
                 fold_index=i,
@@ -200,8 +206,14 @@ class WalkForwardBacktest:
                 max_dd=round(fold_result.max_dd, 3),
             )
 
-        all_returns = pd.concat(all_returns_list).sort_index() if all_returns_list else pd.Series(dtype=float)
-        all_equity = (1 + all_returns).cumprod() * 100_000 if not all_returns.empty else pd.Series([100_000.0])
+        all_returns = (
+            pd.concat(all_returns_list).sort_index() if all_returns_list else pd.Series(dtype=float)
+        )
+        all_equity = (
+            (1 + all_returns).cumprod() * 100_000
+            if not all_returns.empty
+            else pd.Series([100_000.0])
+        )
 
         results = BacktestResults(
             fold_results=fold_results,
@@ -233,8 +245,8 @@ class WalkForwardBacktest:
         trainer: WalkForwardTrainer,
     ):
         import xgboost as xgb
+
         from signals.train import _BASE_PARAMS
-        import numpy as np
 
         X = train_df[features].values.astype(np.float32)
         y = train_df["label"].values

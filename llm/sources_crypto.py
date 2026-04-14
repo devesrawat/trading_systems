@@ -19,20 +19,21 @@ merge_and_rank_crypto() — merge, deduplicate, weight by recency and votes,
 The normalised article dict returned by every source::
 
     {
-        "headline":  str,          # title / headline text
-        "summary":   str,          # body snippet (may be empty)
-        "url":       str,          # canonical URL (used for dedup)
-        "datetime":  float,        # unix timestamp (UTC)
-        "source":    str,          # human-readable source name
-        "currencies": list[str],   # e.g. ["BTC", "ETH"] — empty if unknown
-        "votes":     int,          # crowd importance score (0 if unavailable)
+        "headline": str,  # title / headline text
+        "summary": str,  # body snippet (may be empty)
+        "url": str,  # canonical URL (used for dedup)
+        "datetime": float,  # unix timestamp (UTC)
+        "source": str,  # human-readable source name
+        "currencies": list[str],  # e.g. ["BTC", "ETH"] — empty if unknown
+        "votes": int,  # crowd importance score (0 if unavailable)
     }
 """
+
 from __future__ import annotations
 
 import time
 from abc import ABC, abstractmethod
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import feedparser
@@ -41,13 +42,14 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_REQUEST_TIMEOUT = 10   # seconds for all HTTP calls
+_REQUEST_TIMEOUT = 10  # seconds for all HTTP calls
 _CRYPTOPANIC_BASE = "https://cryptopanic.com/api/free/v1/posts/"
 
 
 # ---------------------------------------------------------------------------
 # Abstract base — every source must implement this contract
 # ---------------------------------------------------------------------------
+
 
 class NewsSource(ABC):
     """Abstract news source.  Implement :meth:`fetch` to plug into the pipeline."""
@@ -78,6 +80,7 @@ class NewsSource(ABC):
 # CryptoPanic
 # ---------------------------------------------------------------------------
 
+
 class CryptoPanicFetcher(NewsSource):
     """Fetch curated crypto news from CryptoPanic with crowd vote scores.
 
@@ -100,8 +103,8 @@ class CryptoPanicFetcher(NewsSource):
     ) -> list[dict]:
         params: dict[str, Any] = {
             "auth_token": self._api_key,
-            "kind":       "news",
-            "public":     "true",
+            "kind": "news",
+            "public": "true",
         }
         if currencies:
             params["currencies"] = ",".join(c.upper() for c in currencies)
@@ -134,18 +137,18 @@ class CryptoPanicFetcher(NewsSource):
                 - votes_obj.get("disliked", 0)
                 - votes_obj.get("toxic", 0)
             )
-            currencies_list = [
-                c.get("code", "") for c in (item.get("currencies") or [])
-            ]
-            results.append({
-                "headline":   item.get("title", ""),
-                "summary":    "",           # CryptoPanic free tier omits body
-                "url":        item.get("url", ""),
-                "datetime":   ts,
-                "source":     "cryptopanic",
-                "currencies": currencies_list,
-                "votes":      max(vote_score, 0),
-            })
+            currencies_list = [c.get("code", "") for c in (item.get("currencies") or [])]
+            results.append(
+                {
+                    "headline": item.get("title", ""),
+                    "summary": "",  # CryptoPanic free tier omits body
+                    "url": item.get("url", ""),
+                    "datetime": ts,
+                    "source": "cryptopanic",
+                    "currencies": currencies_list,
+                    "votes": max(vote_score, 0),
+                }
+            )
             if len(results) >= max_items:
                 break
 
@@ -156,6 +159,7 @@ class CryptoPanicFetcher(NewsSource):
 # ---------------------------------------------------------------------------
 # RSS helpers
 # ---------------------------------------------------------------------------
+
 
 class _RSSSource(NewsSource):
     """Base class for RSS-backed news sources.
@@ -184,7 +188,9 @@ class _RSSSource(NewsSource):
             try:
                 feed = feedparser.parse(url)
             except Exception as exc:
-                log.error("rss_parse_error", source=self._SOURCE_NAME, feed=feed_name, error=str(exc))
+                log.error(
+                    "rss_parse_error", source=self._SOURCE_NAME, feed=feed_name, error=str(exc)
+                )
                 continue
 
             for entry in feed.entries:
@@ -200,7 +206,7 @@ class _RSSSource(NewsSource):
                     continue
 
                 headline: str = getattr(entry, "title", "")
-                summary: str  = getattr(entry, "summary", "")
+                summary: str = getattr(entry, "summary", "")
 
                 # Optional currency filter: skip article if headline+summary
                 # mentions none of the requested tickers
@@ -208,15 +214,17 @@ class _RSSSource(NewsSource):
                     continue
 
                 seen_urls.add(item_url)
-                results.append({
-                    "headline":   headline,
-                    "summary":    summary,
-                    "url":        item_url,
-                    "datetime":   ts,
-                    "source":     self._SOURCE_NAME,
-                    "currencies": [],   # RSS feeds don't tag currencies
-                    "votes":      0,
-                })
+                results.append(
+                    {
+                        "headline": headline,
+                        "summary": summary,
+                        "url": item_url,
+                        "datetime": ts,
+                        "source": self._SOURCE_NAME,
+                        "currencies": [],  # RSS feeds don't tag currencies
+                        "votes": 0,
+                    }
+                )
 
         log.debug("rss_fetched", source=self._SOURCE_NAME, count=len(results))
         return results
@@ -232,20 +240,24 @@ def _headline_mentions(text: str, currency_set: set[str]) -> bool:
 # Concrete RSS sources
 # ---------------------------------------------------------------------------
 
+
 class CoinDeskRSS(_RSSSource):
     """CoinDesk — institutional-grade editorial.  No API key required."""
+
     _FEEDS = {"main": "https://www.coindesk.com/arc/outboundfeeds/rss/"}
     _SOURCE_NAME = "coindesk"
 
 
 class CoinTelegraphRSS(_RSSSource):
     """CoinTelegraph — high-volume crypto news.  No API key required."""
+
     _FEEDS = {"main": "https://cointelegraph.com/rss"}
     _SOURCE_NAME = "cointelegraph"
 
 
 class DecryptRSS(_RSSSource):
     """Decrypt — consumer-friendly analysis.  No API key required."""
+
     _FEEDS = {"main": "https://decrypt.co/feed"}
     _SOURCE_NAME = "decrypt"
 
@@ -256,9 +268,10 @@ class RedditCryptoRSS(_RSSSource):
     Uses Reddit's public Atom feed (no authentication, no API key).
     Captures narrative sentiment that often precedes price moves.
     """
+
     _FEEDS = {
         "cryptocurrency": "https://www.reddit.com/r/CryptoCurrency/hot/.rss?limit=25",
-        "bitcoin":        "https://www.reddit.com/r/Bitcoin/hot/.rss?limit=25",
+        "bitcoin": "https://www.reddit.com/r/Bitcoin/hot/.rss?limit=25",
     }
     _SOURCE_NAME = "reddit"
 
@@ -266,6 +279,7 @@ class RedditCryptoRSS(_RSSSource):
 # ---------------------------------------------------------------------------
 # merge_and_rank_crypto
 # ---------------------------------------------------------------------------
+
 
 def merge_and_rank_crypto(
     sources: list[list[dict]],
@@ -328,6 +342,7 @@ def merge_and_rank_crypto(
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_iso(ts_str: str) -> float:
     """Parse an ISO 8601 datetime string to a unix timestamp. Returns 0 on failure."""
     if not ts_str:
@@ -335,7 +350,7 @@ def _parse_iso(ts_str: str) -> float:
     try:
         # Handle both "2024-01-15T12:30:00Z" and "2024-01-15T12:30:00+00:00"
         ts_str = ts_str.replace("Z", "+00:00")
-        return datetime.fromisoformat(ts_str).astimezone(timezone.utc).timestamp()
+        return datetime.fromisoformat(ts_str).astimezone(UTC).timestamp()
     except Exception:
         return 0.0
 
@@ -346,6 +361,7 @@ def _parse_rss_date(published: str) -> float:
         return time.time()
     try:
         from email.utils import parsedate_to_datetime
+
         return parsedate_to_datetime(published).timestamp()
     except Exception:
         return time.time()

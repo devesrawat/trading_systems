@@ -1,4 +1,5 @@
 """Unit tests for llm/sources.py — mocks HTTP/RSS, no live network calls."""
+
 import time
 from unittest.mock import MagicMock, patch
 
@@ -6,10 +7,10 @@ import pytest
 
 from llm.sources import FinnhubFetcher, MoneycontrolRSS, merge_and_rank
 
-
 # ---------------------------------------------------------------------------
 # FinnhubFetcher
 # ---------------------------------------------------------------------------
+
 
 def _finnhub_news_item(ts_offset: int = 0) -> dict:
     return {
@@ -86,6 +87,7 @@ class TestFinnhubFetcher:
 # MoneycontrolRSS
 # ---------------------------------------------------------------------------
 
+
 def _fake_feed(n: int = 3) -> MagicMock:
     feed = MagicMock()
     feed.entries = []
@@ -150,6 +152,7 @@ class TestMoneycontrolRSS:
 # ---------------------------------------------------------------------------
 # merge_and_rank
 # ---------------------------------------------------------------------------
+
 
 class TestMergeAndRank:
     def _make_items(self, n: int, hours_old: float = 1.0) -> list[dict]:

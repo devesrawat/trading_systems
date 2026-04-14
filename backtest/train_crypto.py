@@ -13,6 +13,7 @@ Usage
     uv run python backtest/train_crypto.py --symbols BTCUSDT ETHUSDT SOLUSDT
     uv run python backtest/train_crypto.py --min-auc 0.58
 """
+
 from __future__ import annotations
 
 import argparse
@@ -44,6 +45,7 @@ _DEFAULT_MIN_AUC = 0.58
 # Data fetching
 # ---------------------------------------------------------------------------
 
+
 def _fetch_binance_ohlcv(symbol: str, days: int = _TWO_YEARS_DAYS) -> pd.DataFrame:
     """
     Fetch daily OHLCV from Binance public API for the last *days* days.
@@ -51,7 +53,7 @@ def _fetch_binance_ohlcv(symbol: str, days: int = _TWO_YEARS_DAYS) -> pd.DataFra
     Returns a DataFrame with columns: open, high, low, close, volume
     indexed by UTC date.
     """
-    limit = min(days, 1000)   # Binance max per request
+    limit = min(days, 1000)  # Binance max per request
     params = {
         "symbol": symbol,
         "interval": "1d",
@@ -61,11 +63,23 @@ def _fetch_binance_ohlcv(symbol: str, days: int = _TWO_YEARS_DAYS) -> pd.DataFra
     resp.raise_for_status()
     raw = resp.json()
 
-    df = pd.DataFrame(raw, columns=[
-        "open_time", "open", "high", "low", "close", "volume",
-        "close_time", "quote_vol", "n_trades",
-        "taker_buy_base", "taker_buy_quote", "_ignore",
-    ])
+    df = pd.DataFrame(
+        raw,
+        columns=[
+            "open_time",
+            "open",
+            "high",
+            "low",
+            "close",
+            "volume",
+            "close_time",
+            "quote_vol",
+            "n_trades",
+            "taker_buy_base",
+            "taker_buy_quote",
+            "_ignore",
+        ],
+    )
     df["time"] = pd.to_datetime(df["open_time"], unit="ms", utc=True).dt.normalize()
     df = df.set_index("time")
     for col in ("open", "high", "low", "close", "volume"):
@@ -95,7 +109,7 @@ def _build_labelled_df(symbol: str, days: int = _TWO_YEARS_DAYS) -> pd.DataFrame
     if missing:
         log.warning("crypto_features_missing", symbol=symbol, missing=sorted(missing))
 
-    df = df.dropna(subset=available + ["label"])
+    df = df.dropna(subset=[*available, "label"])
     log.info("crypto_dataset_built", symbol=symbol, rows=len(df), features=len(available))
     return df
 
@@ -103,6 +117,7 @@ def _build_labelled_df(symbol: str, days: int = _TWO_YEARS_DAYS) -> pd.DataFrame
 # ---------------------------------------------------------------------------
 # Training entry point
 # ---------------------------------------------------------------------------
+
 
 def train_crypto(
     symbols: list[str] | None = None,
@@ -186,6 +201,7 @@ def train_crypto(
         )
 
         import mlflow
+
         mlflow.MlflowClient().transition_model_version_stage(
             name="trading_signal_crypto",
             version=version,
@@ -207,18 +223,26 @@ def train_crypto(
 # CLI
 # ---------------------------------------------------------------------------
 
+
 def _parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description="Train crypto signal models on Binance OHLCV.")
     p.add_argument(
-        "--symbols", nargs="+", default=_DEFAULT_SYMBOLS, metavar="SYM",
+        "--symbols",
+        nargs="+",
+        default=_DEFAULT_SYMBOLS,
+        metavar="SYM",
         help="Binance symbols to train on (default: BTCUSDT ETHUSDT SOLUSDT)",
     )
     p.add_argument(
-        "--min-auc", type=float, default=_DEFAULT_MIN_AUC, metavar="F",
+        "--min-auc",
+        type=float,
+        default=_DEFAULT_MIN_AUC,
+        metavar="F",
         help=f"Minimum mean AUC to register model (default: {_DEFAULT_MIN_AUC})",
     )
     p.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Train but skip MLflow registration",
     )
     return p.parse_args()

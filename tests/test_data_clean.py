@@ -1,20 +1,20 @@
 """Unit tests for data/clean.py — no DB, no Kite required."""
+
 import numpy as np
 import pandas as pd
 import pytest
 
 from data.clean import (
-    NSE_CIRCUIT_THRESHOLD,
     fill_missing_bars,
     flag_circuit_limit_days,
     remove_outliers,
     validate_ohlcv,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_ohlcv(n: int = 20) -> pd.DataFrame:
     idx = pd.date_range("2024-01-01", periods=n, freq="B")
@@ -37,6 +37,7 @@ def _make_ohlcv(n: int = 20) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 # remove_outliers
 # ---------------------------------------------------------------------------
+
 
 class TestRemoveOutliers:
     def test_zscore_removes_spike(self):
@@ -78,6 +79,7 @@ class TestRemoveOutliers:
 # ---------------------------------------------------------------------------
 # validate_ohlcv
 # ---------------------------------------------------------------------------
+
 
 class TestValidateOhlcv:
     def test_valid_df_passes(self):
@@ -125,6 +127,7 @@ class TestValidateOhlcv:
 # flag_circuit_limit_days
 # ---------------------------------------------------------------------------
 
+
 class TestFlagCircuitLimitDays:
     def test_normal_moves_not_flagged(self):
         df = _make_ohlcv(20)
@@ -156,6 +159,7 @@ class TestFlagCircuitLimitDays:
 # ---------------------------------------------------------------------------
 # fill_missing_bars
 # ---------------------------------------------------------------------------
+
 
 class TestFillMissingBars:
     def test_no_gaps_unchanged(self):

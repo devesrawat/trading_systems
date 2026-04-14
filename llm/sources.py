@@ -5,10 +5,11 @@ FinnhubFetcher     — company + market news via Finnhub API
 MoneycontrolRSS    — sector news via Moneycontrol RSS feeds
 merge_and_rank()   — merge, deduplicate, filter by recency, sort descending
 """
+
 from __future__ import annotations
 
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 import feedparser
 import finnhub
@@ -16,12 +17,13 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_RATE_LIMIT_SLEEP = 2.0   # seconds between Finnhub calls (max 30/min on free tier)
+_RATE_LIMIT_SLEEP = 2.0  # seconds between Finnhub calls (max 30/min on free tier)
 
 
 # ---------------------------------------------------------------------------
 # Finnhub
 # ---------------------------------------------------------------------------
+
 
 class FinnhubFetcher:
     """Fetch company and market news from Finnhub."""
@@ -40,8 +42,8 @@ class FinnhubFetcher:
 
         Returns list of dicts: {headline, summary, datetime, source, url}
         """
-        from_dt = datetime.fromtimestamp(from_ts, tz=timezone.utc).strftime("%Y-%m-%d")
-        to_dt = datetime.fromtimestamp(to_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        from_dt = datetime.fromtimestamp(from_ts, tz=UTC).strftime("%Y-%m-%d")
+        to_dt = datetime.fromtimestamp(to_ts, tz=UTC).strftime("%Y-%m-%d")
 
         try:
             raw = self._client.company_news(symbol, _from=from_dt, to=to_dt)
@@ -76,6 +78,7 @@ def _normalise_finnhub(item: dict) -> dict:
 # Moneycontrol RSS
 # ---------------------------------------------------------------------------
 
+
 class MoneycontrolRSS:
     """Parse Moneycontrol RSS feeds for market, economy, and company news."""
 
@@ -91,12 +94,12 @@ class MoneycontrolRSS:
 
         Deduplicates by URL before returning.
         """
-        url = self.FEEDS[feed_name]   # raises KeyError for unknown feed
+        url = self.FEEDS[feed_name]  # raises KeyError for unknown feed
         feed = feedparser.parse(url)
         seen_urls: set[str] = set()
         results: list[dict] = []
 
-        for entry in feed.entries[:max_items * 2]:   # fetch extra to survive dedup
+        for entry in feed.entries[: max_items * 2]:  # fetch extra to survive dedup
             item_url: str = getattr(entry, "link", "")
             if item_url in seen_urls:
                 continue
@@ -124,6 +127,7 @@ def _parse_rss_date(published: str) -> float:
         return time.time()
     try:
         from email.utils import parsedate_to_datetime
+
         return parsedate_to_datetime(published).timestamp()
     except Exception:
         return time.time()
@@ -132,6 +136,7 @@ def _parse_rss_date(published: str) -> float:
 # ---------------------------------------------------------------------------
 # merge_and_rank
 # ---------------------------------------------------------------------------
+
 
 def merge_and_rank(
     sources: list[list[dict]],

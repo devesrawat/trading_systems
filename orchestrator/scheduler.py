@@ -21,11 +21,17 @@ Both schedule (equity + crypto):
 All jobs are wrapped in try/except — a failed job sends a Telegram alert
 but never crashes the scheduler process.
 """
+
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import structlog
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
+
+if TYPE_CHECKING:
+    from orchestrator.main import TradingSystem
 
 log = structlog.get_logger(__name__)
 
@@ -38,7 +44,7 @@ class TradingScheduler:
 
     def __init__(
         self,
-        system: "TradingSystem",  # type: ignore[name-defined]
+        system: TradingSystem,  # type: ignore[name-defined]
         market_type: str = "equity",
     ) -> None:
         self._system = system
@@ -200,6 +206,7 @@ class TradingScheduler:
 
     def _safe(self, fn):
         """Wrap a job function so exceptions alert Telegram but never crash."""
+
         def wrapper(*args, **kwargs):
             try:
                 fn(*args, **kwargs)
@@ -207,18 +214,21 @@ class TradingScheduler:
                 log.error("scheduler_job_failed", job=fn.__name__, error=str(exc))
                 try:
                     from monitoring.alerts import TelegramAlerter
+
                     TelegramAlerter().alert_system_error(
                         module=fn.__name__,
                         error_msg=str(exc),
                     )
                 except Exception:
                     pass
+
         wrapper.__name__ = getattr(fn, "__name__", "unknown")
         return wrapper
 
     def _health_check(self) -> None:
         """Alert if the trading loop heartbeat is stale."""
         from monitoring.health import HealthMonitor
+
         HealthMonitor().send_alert_if_stale()
 
     def _fetch_fii_dii(self) -> None:
@@ -226,9 +236,11 @@ class TradingScheduler:
         try:
             from data.ingest import NSEDataScraper
             from data.store import get_redis
+
             flows = NSEDataScraper().get_fii_dii_flows()
             if flows:
                 import json
+
                 get_redis().set("trading:fii_dii:latest", json.dumps(flows), ex=86400)
                 log.info("fii_dii_fetched", net_fii=flows.get("fii_net"))
         except Exception as exc:

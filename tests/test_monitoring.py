@@ -1,15 +1,14 @@
 """Unit tests for monitoring/ — TDD RED phase. Mocks Telegram API and MLflow."""
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from monitoring.alerts import TelegramAlerter
 from monitoring.mlflow_tracker import ModelDriftMonitor
 
-
 # ---------------------------------------------------------------------------
 # TelegramAlerter
 # ---------------------------------------------------------------------------
+
 
 class TestTelegramAlerter:
     def test_send_calls_telegram_api(self):
@@ -35,11 +34,10 @@ class TestTelegramAlerter:
             mock_bot.send_message.side_effect = Exception("Network error")
             mock_bot_cls.return_value = mock_bot
             alerter = TelegramAlerter(bot_token="test_token", chat_id="12345")
-            alerter.send("Test")   # must not raise
+            alerter.send("Test")  # must not raise
 
     def test_send_retries_on_failure(self):
-        with patch("monitoring.alerts.Bot") as mock_bot_cls, \
-             patch("monitoring.alerts.time.sleep"):
+        with patch("monitoring.alerts.Bot") as mock_bot_cls, patch("monitoring.alerts.time.sleep"):
             mock_bot = AsyncMock()
             mock_bot.send_message.side_effect = [Exception("fail"), None]
             mock_bot_cls.return_value = mock_bot
@@ -99,13 +97,14 @@ class TestAlertFormats:
     def test_no_token_skips_silently(self):
         """If bot_token is None, all alerts are silently no-ops."""
         alerter = TelegramAlerter(bot_token=None, chat_id=None)
-        alerter.send("test")              # must not raise
+        alerter.send("test")  # must not raise
         alerter.alert_circuit_breaker("test", 0.0, 100_000.0)
 
 
 # ---------------------------------------------------------------------------
 # ModelDriftMonitor
 # ---------------------------------------------------------------------------
+
 
 class TestModelDriftMonitor:
     def test_compare_returns_float(self):
@@ -133,7 +132,7 @@ class TestModelDriftMonitor:
 
             # Simulate 20 runs all with pnl_pct < 0 (all losses)
             runs = []
-            for i in range(20):
+            for _i in range(20):
                 run = MagicMock()
                 run.data.metrics = {"pnl_pct": -0.01, "signal_prob": 0.70}
                 run.data.tags = {"outcome": "loss"}
@@ -150,7 +149,7 @@ class TestModelDriftMonitor:
             mock_mlflow.MlflowClient.return_value = mock_client
 
             runs = []
-            for i in range(20):
+            for _i in range(20):
                 run = MagicMock()
                 run.data.metrics = {"pnl_pct": 0.03, "signal_prob": 0.72}
                 run.data.tags = {"outcome": "win"}

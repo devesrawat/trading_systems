@@ -1,7 +1,8 @@
 """Unit tests for data/providers/binance.py — mocks HTTP and WebSocket, no live calls."""
+
 import json
-from datetime import date, datetime, timezone
-from unittest.mock import MagicMock, call, patch
+from datetime import UTC, date, datetime
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -13,10 +14,10 @@ from data.providers.binance import (
     _to_ms,
 )
 
-
 # ---------------------------------------------------------------------------
 # _symbol_hash
 # ---------------------------------------------------------------------------
+
 
 class TestSymbolHash:
     def test_deterministic(self):
@@ -38,13 +39,14 @@ class TestSymbolHash:
 # _to_ms
 # ---------------------------------------------------------------------------
 
+
 class TestToMs:
     def test_date_converts_to_midnight_utc_ms(self):
         ms = _to_ms(date(2024, 1, 1))
-        assert ms == int(datetime(2024, 1, 1, tzinfo=timezone.utc).timestamp() * 1000)
+        assert ms == int(datetime(2024, 1, 1, tzinfo=UTC).timestamp() * 1000)
 
     def test_datetime_converts_correctly(self):
-        dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 6, 15, 12, 0, 0, tzinfo=UTC)
         assert _to_ms(dt) == int(dt.timestamp() * 1000)
 
     def test_naive_datetime_treated_as_utc(self):
@@ -57,21 +59,22 @@ class TestToMs:
 # _klines_to_df
 # ---------------------------------------------------------------------------
 
+
 def _fake_kline_row(open_time_ms: int = 1704067200000) -> list:
     """Return a single Binance kline row with close_time at open+60s."""
     return [
-        open_time_ms,       # 0  open_time
-        "42000.0",          # 1  open
-        "42500.0",          # 2  high
-        "41800.0",          # 3  low
-        "42200.0",          # 4  close
-        "150.5",            # 5  volume
-        open_time_ms + 59999, # 6  close_time
-        "6321000.0",        # 7  quote_asset_volume
-        1234,               # 8  number_of_trades
-        "75.25",            # 9  taker_buy_base
-        "3160500.0",        # 10 taker_buy_quote
-        "0",                # 11 ignore
+        open_time_ms,  # 0  open_time
+        "42000.0",  # 1  open
+        "42500.0",  # 2  high
+        "41800.0",  # 3  low
+        "42200.0",  # 4  close
+        "150.5",  # 5  volume
+        open_time_ms + 59999,  # 6  close_time
+        "6321000.0",  # 7  quote_asset_volume
+        1234,  # 8  number_of_trades
+        "75.25",  # 9  taker_buy_base
+        "3160500.0",  # 10 taker_buy_quote
+        "0",  # 11 ignore
     ]
 
 
@@ -112,6 +115,7 @@ class TestKlinesToDf:
 # BinanceProvider — instrument registry
 # ---------------------------------------------------------------------------
 
+
 class TestBinanceProviderRegistry:
     def test_register_and_resolve_pair(self):
         p = BinanceProvider()
@@ -144,6 +148,7 @@ class TestBinanceProviderRegistry:
 # ---------------------------------------------------------------------------
 # BinanceProvider — fetch_historical
 # ---------------------------------------------------------------------------
+
 
 def _make_provider(*pairs: str) -> BinanceProvider:
     p = BinanceProvider()
@@ -186,8 +191,11 @@ class TestFetchHistorical:
     def test_paginates_when_full_page_returned(self, mock_get, mock_write):
         """When Binance returns exactly MAX_BARS (1000), a second request is made."""
         from data.providers.binance import _MAX_BARS_PER_REQUEST
+
         # First page: exactly 1000 bars ending at a known close_time
-        first_page = [_fake_kline_row(1704067200000 + i * 60000) for i in range(_MAX_BARS_PER_REQUEST)]
+        first_page = [
+            _fake_kline_row(1704067200000 + i * 60000) for i in range(_MAX_BARS_PER_REQUEST)
+        ]
         # Second page: fewer than 1000 bars → stop
         second_page = [_fake_kline_row(1704067200000 + (_MAX_BARS_PER_REQUEST + 1) * 60000)]
         mock_get.side_effect = [first_page, second_page]
@@ -198,7 +206,7 @@ class TestFetchHistorical:
         assert len(df) == _MAX_BARS_PER_REQUEST + 1
 
     def test_unknown_symbol_raises(self):
-        p = BinanceProvider()   # no instruments registered
+        p = BinanceProvider()  # no instruments registered
         with pytest.raises(ValueError):
             p.fetch_historical("UNKNOWN", date(2024, 1, 1), date(2024, 1, 2), "day")
 
@@ -215,6 +223,7 @@ class TestFetchHistorical:
         # Three side effects: two pages with the same bar, then empty to halt loop
         mock_get.side_effect = [[bar], [bar], []]
         from data.providers import binance as bmod
+
         original_max = bmod._MAX_BARS_PER_REQUEST
         bmod._MAX_BARS_PER_REQUEST = 1
         try:
@@ -228,6 +237,7 @@ class TestFetchHistorical:
 # ---------------------------------------------------------------------------
 # BinanceProvider — get_quote
 # ---------------------------------------------------------------------------
+
 
 class TestGetQuote:
     @patch.object(BinanceProvider, "_get")
@@ -265,6 +275,7 @@ class TestGetQuote:
 # BinanceProvider — stream_live
 # ---------------------------------------------------------------------------
 
+
 class TestStreamLive:
     def _mock_websocket_module(self) -> MagicMock:
         """Return a mock websocket module so tests don't need websocket-client installed."""
@@ -279,22 +290,24 @@ class TestStreamLive:
         """WebSocket on_message handler correctly parses aggTrade and calls on_tick."""
         received: list[dict] = []
 
-        agg_trade_msg = json.dumps({
-            "stream": "btcusdt@aggTrade",
-            "data": {
-                "e": "aggTrade",
-                "E": 1704067200000,
-                "s": "BTCUSDT",
-                "a": 99,
-                "p": "42100.00",
-                "q": "0.005",
-                "f": 100,
-                "l": 100,
-                "T": 1704067200000,
-                "m": False,
-                "M": True,
-            },
-        })
+        agg_trade_msg = json.dumps(
+            {
+                "stream": "btcusdt@aggTrade",
+                "data": {
+                    "e": "aggTrade",
+                    "E": 1704067200000,
+                    "s": "BTCUSDT",
+                    "a": 99,
+                    "p": "42100.00",
+                    "q": "0.005",
+                    "f": 100,
+                    "l": 100,
+                    "T": 1704067200000,
+                    "m": False,
+                    "M": True,
+                },
+            }
+        )
 
         captured_on_message = {}
 
@@ -306,6 +319,7 @@ class TestStreamLive:
         mock_ws_mod.WebSocketApp.side_effect = fake_ws_app
 
         import sys
+
         with patch.dict(sys.modules, {"websocket": mock_ws_mod}):
             p = _make_provider("BTCUSDT")
             p.stream_live(["BTC"], on_tick=lambda ticks: received.extend(ticks))
@@ -313,13 +327,16 @@ class TestStreamLive:
         # Directly invoke the captured on_message callback
         captured_on_message["fn"](MagicMock(), agg_trade_msg)
 
-        mock_write.assert_called_once_with("BTCUSDT", {
-            "symbol":         "BTCUSDT",
-            "last_price":     42100.0,
-            "quantity":       0.005,
-            "timestamp":      1704067200000,
-            "is_buyer_maker": False,
-        })
+        mock_write.assert_called_once_with(
+            "BTCUSDT",
+            {
+                "symbol": "BTCUSDT",
+                "last_price": 42100.0,
+                "quantity": 0.005,
+                "timestamp": 1704067200000,
+                "is_buyer_maker": False,
+            },
+        )
         assert len(received) == 1
         assert received[0]["last_price"] == 42100.0
 
@@ -333,10 +350,11 @@ class TestStreamLive:
     def test_stop_stream_no_ws_is_noop(self):
         p = _make_provider("BTCUSDT")
         p._ws_app = None
-        p.stop_stream()   # must not raise
+        p.stop_stream()  # must not raise
 
     def test_unknown_symbol_raises_before_connecting(self):
         import sys
+
         mock_ws_mod = MagicMock()
         with patch.dict(sys.modules, {"websocket": mock_ws_mod}):
             p = BinanceProvider()
@@ -347,6 +365,7 @@ class TestStreamLive:
 # ---------------------------------------------------------------------------
 # BinanceProvider — auth helpers raise NotImplementedError
 # ---------------------------------------------------------------------------
+
 
 class TestAuthHelpers:
     def test_get_login_url_raises(self):

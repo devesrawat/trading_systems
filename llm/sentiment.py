@@ -4,9 +4,9 @@ FinBERT sentiment scoring engine.
 Model: ProsusAI/finbert (cached locally in .models/)
 Score: positive_prob - negative_prob  →  float in [-1, +1]
 """
+
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import numpy as np
@@ -21,7 +21,7 @@ log = structlog.get_logger(__name__)
 
 _MODEL_NAME = "ProsusAI/finbert"
 _MODEL_CACHE = str(Path(__file__).parent.parent / ".models")
-_CACHE_TTL = 3600       # 1 hour
+_CACHE_TTL = 3600  # 1 hour
 _BATCH_GPU = 32
 _BATCH_CPU = 8
 _MAX_TOKENS = 512
@@ -34,7 +34,7 @@ def _detect_device() -> int:
         return 0
     if torch.backends.mps.is_available():
         log.info("device_selected", device="mps")
-        return 0        # transformers maps device=0 to MPS on Apple Silicon
+        return 0  # transformers maps device=0 to MPS on Apple Silicon
     log.info("device_selected", device="cpu")
     return -1
 
@@ -57,7 +57,7 @@ class FinBERTScorer:
             task="text-classification",
             model=_MODEL_NAME,
             tokenizer=_MODEL_NAME,
-            top_k=None,             # return all 3 class scores
+            top_k=None,  # return all 3 class scores
             device=device,
             model_kwargs={"cache_dir": _MODEL_CACHE},
             truncation=True,
@@ -115,13 +115,12 @@ class FinBERTScorer:
 
         if method == "weighted_recency":
             n = len(scores)
-            weights = np.arange(1, n + 1, dtype=float)   # [1, 2, 3, …, n]
+            weights = np.arange(1, n + 1, dtype=float)  # [1, 2, 3, …, n]
             weights /= weights.sum()
             return float(np.dot(weights, scores))
 
         raise ValueError(
-            f"Unknown aggregation method '{method}'. "
-            "Use 'mean' or 'weighted_recency'."
+            f"Unknown aggregation method '{method}'. Use 'mean' or 'weighted_recency'."
         )
 
     # ------------------------------------------------------------------
@@ -157,6 +156,7 @@ class FinBERTScorer:
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_score(label_scores: list[dict]) -> float:
     """Convert FinBERT 3-class output to a single [-1, +1] float."""

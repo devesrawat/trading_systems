@@ -7,6 +7,7 @@ Provides:
   - get_fo_instruments     — active F&O instruments with lot sizes
   - filter_liquid          — keep only instruments above volume threshold
 """
+
 from __future__ import annotations
 
 import json
@@ -36,6 +37,7 @@ DEFAULT_MIN_AVG_VOLUME = 500_000
 # Load from disk
 # ---------------------------------------------------------------------------
 
+
 def load_nse500_tokens() -> list[dict[str, Any]]:
     """
     Load the NSE500 instrument list from config/instruments.json.
@@ -61,7 +63,8 @@ def load_nse500_tokens() -> list[dict[str, Any]]:
 # Refresh from Kite API
 # ---------------------------------------------------------------------------
 
-def refresh_instruments(kite: "KiteConnect") -> list[dict[str, Any]]:
+
+def refresh_instruments(kite: KiteConnect) -> list[dict[str, Any]]:
     """
     Pull the full instrument dump from Kite, filter to NSE equities,
     and persist to config/instruments.json.
@@ -103,7 +106,8 @@ def refresh_instruments(kite: "KiteConnect") -> list[dict[str, Any]]:
 # F&O instruments
 # ---------------------------------------------------------------------------
 
-def get_fo_instruments(kite: "KiteConnect") -> list[dict[str, Any]]:
+
+def get_fo_instruments(kite: KiteConnect) -> list[dict[str, Any]]:
     """
     Return active F&O (NFO) instruments with lot sizes.
 
@@ -144,6 +148,7 @@ def get_fo_instruments(kite: "KiteConnect") -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Liquidity filter
 # ---------------------------------------------------------------------------
+
 
 def filter_liquid(
     universe: list[dict[str, Any]],

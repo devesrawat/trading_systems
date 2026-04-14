@@ -1,4 +1,5 @@
 """Unit tests for llm/sources_crypto.py — mocks HTTP/RSS, no live network calls."""
+
 import time
 from unittest.mock import MagicMock, patch
 
@@ -7,8 +8,8 @@ import pytest
 from llm.sources_crypto import (
     CoinDeskRSS,
     CoinTelegraphRSS,
-    DecryptRSS,
     CryptoPanicFetcher,
+    DecryptRSS,
     NewsSource,
     RedditCryptoRSS,
     _parse_iso,
@@ -16,10 +17,10 @@ from llm.sources_crypto import (
     merge_and_rank_crypto,
 )
 
-
 # ---------------------------------------------------------------------------
 # NewsSource — ABC contract
 # ---------------------------------------------------------------------------
+
 
 class TestNewsSourceABC:
     def test_cannot_instantiate_directly(self):
@@ -29,6 +30,7 @@ class TestNewsSourceABC:
     def test_concrete_subclass_must_implement_fetch(self):
         class Incomplete(NewsSource):
             pass
+
         with pytest.raises(TypeError):
             Incomplete()  # type: ignore[abstract]
 
@@ -36,6 +38,7 @@ class TestNewsSourceABC:
         class Complete(NewsSource):
             def fetch(self, currencies=None, from_ts=None, to_ts=None, max_items=30):
                 return []
+
         assert Complete().fetch() == []
 
 
@@ -43,16 +46,20 @@ class TestNewsSourceABC:
 # CryptoPanicFetcher
 # ---------------------------------------------------------------------------
 
-def _cp_result(title: str = "BTC rallies", url: str = "https://cp.example/1",
-               published_at: str = "2024-01-15T12:00:00Z",
-               currencies: list | None = None,
-               votes: dict | None = None) -> dict:
+
+def _cp_result(
+    title: str = "BTC rallies",
+    url: str = "https://cp.example/1",
+    published_at: str = "2024-01-15T12:00:00Z",
+    currencies: list | None = None,
+    votes: dict | None = None,
+) -> dict:
     return {
-        "title":        title,
-        "url":          url,
+        "title": title,
+        "url": url,
         "published_at": published_at,
-        "currencies":   [{"code": c} for c in (currencies or ["BTC"])],
-        "votes":        votes or {"important": 5, "liked": 10, "disliked": 1, "toxic": 0},
+        "currencies": [{"code": c} for c in (currencies or ["BTC"])],
+        "votes": votes or {"important": 5, "liked": 10, "disliked": 1, "toxic": 0},
     }
 
 
@@ -77,18 +84,18 @@ class TestCryptoPanicFetcher:
     @patch("llm.sources_crypto.requests.get")
     def test_vote_score_computed_correctly(self, mock_get):
         # important=5, liked=10, disliked=1, toxic=0 → score = 14
-        mock_get.return_value = self._mock_response([_cp_result(
-            votes={"important": 5, "liked": 10, "disliked": 1, "toxic": 0}
-        )])
+        mock_get.return_value = self._mock_response(
+            [_cp_result(votes={"important": 5, "liked": 10, "disliked": 1, "toxic": 0})]
+        )
         fetcher = CryptoPanicFetcher(api_key="testkey")
         result = fetcher.fetch()
         assert result[0]["votes"] == 14
 
     @patch("llm.sources_crypto.requests.get")
     def test_negative_vote_score_clamped_to_zero(self, mock_get):
-        mock_get.return_value = self._mock_response([_cp_result(
-            votes={"important": 0, "liked": 0, "disliked": 10, "toxic": 5}
-        )])
+        mock_get.return_value = self._mock_response(
+            [_cp_result(votes={"important": 0, "liked": 0, "disliked": 10, "toxic": 5})]
+        )
         fetcher = CryptoPanicFetcher(api_key="testkey")
         result = fetcher.fetch()
         assert result[0]["votes"] == 0
@@ -130,12 +137,13 @@ class TestCryptoPanicFetcher:
         fetcher = CryptoPanicFetcher(api_key="testkey")
         fetcher.fetch(currencies=["BTC", "ETH"])
         call_params = mock_get.call_args[1]["params"]
-        assert "BTC,ETH" == call_params["currencies"]
+        assert call_params["currencies"] == "BTC,ETH"
 
 
 # ---------------------------------------------------------------------------
 # RSS sources — shared behaviour via _RSSSource
 # ---------------------------------------------------------------------------
+
 
 def _fake_rss_feed(n: int = 3, base_url: str = "https://example.com") -> MagicMock:
     feed = MagicMock()
@@ -151,7 +159,9 @@ def _fake_rss_feed(n: int = 3, base_url: str = "https://example.com") -> MagicMo
 
 
 class TestRSSSources:
-    @pytest.mark.parametrize("source_cls", [CoinDeskRSS, CoinTelegraphRSS, DecryptRSS, RedditCryptoRSS])
+    @pytest.mark.parametrize(
+        "source_cls", [CoinDeskRSS, CoinTelegraphRSS, DecryptRSS, RedditCryptoRSS]
+    )
     def test_returns_list_of_dicts(self, source_cls):
         with patch("llm.sources_crypto.feedparser.parse", return_value=_fake_rss_feed(3)):
             result = source_cls().fetch()
@@ -174,7 +184,7 @@ class TestRSSSources:
     @pytest.mark.parametrize("source_cls", [CoinDeskRSS, CoinTelegraphRSS, DecryptRSS])
     def test_deduplicates_by_url(self, source_cls):
         feed = _fake_rss_feed(3)
-        feed.entries[1].link = feed.entries[0].link   # duplicate URL
+        feed.entries[1].link = feed.entries[0].link  # duplicate URL
         with patch("llm.sources_crypto.feedparser.parse", return_value=feed):
             result = source_cls().fetch()
         urls = [item["url"] for item in result]
@@ -189,7 +199,9 @@ class TestRSSSources:
 
     def test_reddit_fetches_multiple_feeds(self):
         """RedditCryptoRSS has 2 feeds — both are fetched."""
-        with patch("llm.sources_crypto.feedparser.parse", return_value=_fake_rss_feed(2)) as mock_parse:
+        with patch(
+            "llm.sources_crypto.feedparser.parse", return_value=_fake_rss_feed(2)
+        ) as mock_parse:
             RedditCryptoRSS().fetch()
         assert mock_parse.call_count == len(RedditCryptoRSS._FEEDS)
 
@@ -219,17 +231,20 @@ class TestRSSSources:
 # merge_and_rank_crypto
 # ---------------------------------------------------------------------------
 
-def _make_articles(n: int, hours_old: float = 1.0, votes: int = 0, url_prefix: str = "a") -> list[dict]:
+
+def _make_articles(
+    n: int, hours_old: float = 1.0, votes: int = 0, url_prefix: str = "a"
+) -> list[dict]:
     now = time.time()
     return [
         {
-            "headline":   f"Article {url_prefix}-{i}",
-            "summary":    "",
-            "url":        f"https://example.com/{url_prefix}-{i}",
-            "datetime":   now - hours_old * 3600 - i,
-            "source":     "test",
+            "headline": f"Article {url_prefix}-{i}",
+            "summary": "",
+            "url": f"https://example.com/{url_prefix}-{i}",
+            "datetime": now - hours_old * 3600 - i,
+            "source": "test",
             "currencies": [],
-            "votes":      votes,
+            "votes": votes,
         }
         for i in range(n)
     ]
@@ -256,24 +271,28 @@ class TestMergeAndRankCrypto:
     def test_high_vote_articles_ranked_above_low_vote(self):
         """An older article with many votes should beat a newer article with zero votes."""
         now = time.time()
-        high_vote = [{
-            "headline": "Important news",
-            "url": "https://example.com/high",
-            "datetime": now - 3 * 3600,   # 3h old
-            "source": "test",
-            "summary": "",
-            "currencies": [],
-            "votes": 100,
-        }]
-        low_vote = [{
-            "headline": "Minor update",
-            "url": "https://example.com/low",
-            "datetime": now - 1 * 3600,   # 1h old (more recent)
-            "source": "test",
-            "summary": "",
-            "currencies": [],
-            "votes": 0,
-        }]
+        high_vote = [
+            {
+                "headline": "Important news",
+                "url": "https://example.com/high",
+                "datetime": now - 3 * 3600,  # 3h old
+                "source": "test",
+                "summary": "",
+                "currencies": [],
+                "votes": 100,
+            }
+        ]
+        low_vote = [
+            {
+                "headline": "Minor update",
+                "url": "https://example.com/low",
+                "datetime": now - 1 * 3600,  # 1h old (more recent)
+                "source": "test",
+                "summary": "",
+                "currencies": [],
+                "votes": 0,
+            }
+        ]
         result = merge_and_rank_crypto([high_vote, low_vote], hours_lookback=6, vote_weight=1.0)
         assert result[0]["url"] == "https://example.com/high"
 
@@ -299,6 +318,7 @@ class TestMergeAndRankCrypto:
 # ---------------------------------------------------------------------------
 # Private helpers
 # ---------------------------------------------------------------------------
+
 
 class TestParseHelpers:
     def test_parse_iso_utc_z(self):

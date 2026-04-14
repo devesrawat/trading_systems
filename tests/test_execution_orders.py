@@ -1,4 +1,5 @@
 """Unit tests for execution/orders.py — uses BrokerAdapter abstraction."""
+
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -6,16 +7,18 @@ import pytest
 from execution.broker import PaperBrokerAdapter
 from execution.orders import OrderExecutor, SlippageTier, write_live_trade
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _paper_executor() -> OrderExecutor:
     """OrderExecutor backed by PaperBrokerAdapter (is_paper=True)."""
     mock_cb = MagicMock()
     mock_cb.is_halted.return_value = False
-    return OrderExecutor(broker=PaperBrokerAdapter(initial_capital=500_000), circuit_breaker=mock_cb)
+    return OrderExecutor(
+        broker=PaperBrokerAdapter(initial_capital=500_000), circuit_breaker=mock_cb
+    )
 
 
 def _live_executor() -> tuple[OrderExecutor, MagicMock]:
@@ -25,7 +28,9 @@ def _live_executor() -> tuple[OrderExecutor, MagicMock]:
     mock_broker.place_order.return_value = "ORDER123"
     mock_broker.cancel_order.return_value = True
     mock_broker.get_order_status.return_value = {
-        "order_id": "ORDER123", "status": "COMPLETE", "filled_quantity": 10
+        "order_id": "ORDER123",
+        "status": "COMPLETE",
+        "filled_quantity": 10,
     }
     mock_cb = MagicMock()
     mock_cb.is_halted.return_value = False
@@ -36,6 +41,7 @@ def _live_executor() -> tuple[OrderExecutor, MagicMock]:
 # ---------------------------------------------------------------------------
 # Paper mode — default safety
 # ---------------------------------------------------------------------------
+
 
 class TestPaperMode:
     def test_paper_mode_on_by_default(self):
@@ -64,6 +70,7 @@ class TestPaperMode:
 # ---------------------------------------------------------------------------
 # place_market_order
 # ---------------------------------------------------------------------------
+
 
 class TestPlaceMarketOrder:
     def test_returns_order_id(self):
@@ -115,11 +122,14 @@ class TestPlaceMarketOrder:
 # place_limit_order
 # ---------------------------------------------------------------------------
 
+
 class TestPlaceLimitOrder:
     def test_returns_order_id(self):
         executor, _ = _live_executor()
         with patch("execution.orders.write_live_trade"):
-            order_id = executor.place_limit_order("TCS", "BUY", quantity=5, price=3500.0, tag="test")
+            order_id = executor.place_limit_order(
+                "TCS", "BUY", quantity=5, price=3500.0, tag="test"
+            )
         assert order_id is not None
 
     def test_broker_called_with_limit_order_type(self):
@@ -138,6 +148,7 @@ class TestPlaceLimitOrder:
 # ---------------------------------------------------------------------------
 # cancel_order
 # ---------------------------------------------------------------------------
+
 
 class TestCancelOrder:
     def test_cancel_returns_true_on_success(self):
@@ -162,6 +173,7 @@ class TestCancelOrder:
 # get_order_status
 # ---------------------------------------------------------------------------
 
+
 class TestGetOrderStatus:
     def test_returns_dict(self):
         executor, _ = _live_executor()
@@ -183,31 +195,36 @@ class TestGetOrderStatus:
 # slippage_estimate
 # ---------------------------------------------------------------------------
 
+
 class TestSlippageEstimate:
     def test_large_cap_lower_slippage(self):
         executor = _paper_executor()
         slip = executor.slippage_estimate("RELIANCE", quantity=10, side="BUY")
-        assert slip <= 0.001   # ≤ 0.1%
+        assert slip <= 0.001  # ≤ 0.1%
 
     def test_slippage_is_fraction_not_rupees(self):
         executor = _paper_executor()
         slip = executor.slippage_estimate("RELIANCE", quantity=10, side="BUY")
-        assert 0.0 < slip < 0.01    # between 0% and 1%
+        assert 0.0 < slip < 0.01  # between 0% and 1%
 
     def test_slippage_tiers(self):
         executor = _paper_executor()
-        large = executor.slippage_estimate("RELIANCE", quantity=10, side="BUY",
-                                           tier=SlippageTier.LARGE_CAP)
-        mid = executor.slippage_estimate("RELIANCE", quantity=10, side="BUY",
-                                         tier=SlippageTier.MID_CAP)
-        small = executor.slippage_estimate("RELIANCE", quantity=10, side="BUY",
-                                           tier=SlippageTier.SMALL_CAP)
+        large = executor.slippage_estimate(
+            "RELIANCE", quantity=10, side="BUY", tier=SlippageTier.LARGE_CAP
+        )
+        mid = executor.slippage_estimate(
+            "RELIANCE", quantity=10, side="BUY", tier=SlippageTier.MID_CAP
+        )
+        small = executor.slippage_estimate(
+            "RELIANCE", quantity=10, side="BUY", tier=SlippageTier.SMALL_CAP
+        )
         assert large < mid < small
 
 
 # ---------------------------------------------------------------------------
 # write_live_trade (SEBI audit trail)
 # ---------------------------------------------------------------------------
+
 
 class TestWriteLiveTrade:
     def _mock_engine(self):
@@ -222,8 +239,12 @@ class TestWriteLiveTrade:
         engine, conn = self._mock_engine()
         with patch("execution.orders.get_engine", return_value=engine):
             write_live_trade(
-                symbol="RELIANCE", side="BUY", quantity=10, price=2500.0,
-                order_id="ORD001", tag="signal",
+                symbol="RELIANCE",
+                side="BUY",
+                quantity=10,
+                price=2500.0,
+                order_id="ORD001",
+                tag="signal",
             )
         conn.execute.assert_called_once()
 
@@ -231,8 +252,12 @@ class TestWriteLiveTrade:
         engine, conn = self._mock_engine()
         with patch("execution.orders.get_engine", return_value=engine):
             write_live_trade(
-                symbol="TCS", side="SELL", quantity=5, price=3600.0,
-                order_id="ORD002", tag="exit",
+                symbol="TCS",
+                side="SELL",
+                quantity=5,
+                price=3600.0,
+                order_id="ORD002",
+                tag="exit",
             )
         conn.commit.assert_called_once()
 
@@ -240,8 +265,12 @@ class TestWriteLiveTrade:
         engine, conn = self._mock_engine()
         with patch("execution.orders.get_engine", return_value=engine):
             write_live_trade(
-                symbol="INFY", side="BUY", quantity=8, price=1400.0,
-                order_id="ORD999", tag="test",
+                symbol="INFY",
+                side="BUY",
+                quantity=8,
+                price=1400.0,
+                order_id="ORD999",
+                tag="test",
             )
         params = conn.execute.call_args[0][1]
         assert params["order_id"] == "ORD999"

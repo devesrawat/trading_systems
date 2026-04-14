@@ -14,6 +14,7 @@ Revision ID: 0002
 Revises: 0001
 Create Date: 2026-03-22
 """
+
 from __future__ import annotations
 
 from alembic import op
@@ -45,8 +46,7 @@ def upgrade() -> None:
         )
     """)
     op.execute(
-        "CREATE INDEX IF NOT EXISTS live_trades_symbol_time_idx "
-        "ON live_trades (symbol, time DESC)"
+        "CREATE INDEX IF NOT EXISTS live_trades_symbol_time_idx ON live_trades (symbol, time DESC)"
     )
 
     # ------------------------------------------------------------------
@@ -68,9 +68,7 @@ def upgrade() -> None:
             signal_type         TEXT
         )
     """)
-    op.execute(
-        "SELECT create_hypertable('iv_snapshots', 'time', if_not_exists => TRUE)"
-    )
+    op.execute("SELECT create_hypertable('iv_snapshots', 'time', if_not_exists => TRUE)")
     op.execute(
         "CREATE INDEX IF NOT EXISTS iv_snapshots_symbol_time_idx "
         "ON iv_snapshots (symbol, time DESC)"

@@ -1,8 +1,7 @@
 """Unit tests for data/universe_crypto.py — mocks HTTP and Redis, no live calls."""
+
 import json
 from unittest.mock import MagicMock, patch
-
-import pytest
 
 from data.universe_crypto import (
     CryptoUniverse,
@@ -11,10 +10,10 @@ from data.universe_crypto import (
     _to_instrument,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _btc_item(
     rank: int = 1,
@@ -22,36 +21,36 @@ def _btc_item(
     market_cap: float = 800_000_000_000,
 ) -> dict:
     return {
-        "id":                  "bitcoin",
-        "symbol":              "btc",
-        "name":                "Bitcoin",
-        "current_price":       42000.0,
-        "market_cap":          market_cap,
-        "total_volume":        volume,
-        "market_cap_rank":     rank,
+        "id": "bitcoin",
+        "symbol": "btc",
+        "name": "Bitcoin",
+        "current_price": 42000.0,
+        "market_cap": market_cap,
+        "total_volume": volume,
+        "market_cap_rank": rank,
     }
 
 
 def _eth_item(rank: int = 2) -> dict:
     return {
-        "id":              "ethereum",
-        "symbol":          "eth",
-        "name":            "Ethereum",
-        "current_price":   2500.0,
-        "market_cap":      300_000_000_000,
-        "total_volume":    10_000_000_000,
+        "id": "ethereum",
+        "symbol": "eth",
+        "name": "Ethereum",
+        "current_price": 2500.0,
+        "market_cap": 300_000_000_000,
+        "total_volume": 10_000_000_000,
         "market_cap_rank": rank,
     }
 
 
 def _stablecoin_item() -> dict:
     return {
-        "id":              "tether",
-        "symbol":          "usdt",
-        "name":            "Tether",
-        "current_price":   1.0,
-        "market_cap":      90_000_000_000,
-        "total_volume":    50_000_000_000,
+        "id": "tether",
+        "symbol": "usdt",
+        "name": "Tether",
+        "current_price": 1.0,
+        "market_cap": 90_000_000_000,
+        "total_volume": 50_000_000_000,
         "market_cap_rank": 3,
     }
 
@@ -59,6 +58,7 @@ def _stablecoin_item() -> dict:
 # ---------------------------------------------------------------------------
 # _include
 # ---------------------------------------------------------------------------
+
 
 class TestInclude:
     def test_accepts_bitcoin(self):
@@ -72,8 +72,15 @@ class TestInclude:
 
     def test_rejects_all_known_stablecoins(self):
         stablecoin_ids = [
-            "tether", "usd-coin", "dai", "binance-usd", "trueusd",
-            "first-digital-usd", "usdd", "frax", "pax-dollar",
+            "tether",
+            "usd-coin",
+            "dai",
+            "binance-usd",
+            "trueusd",
+            "first-digital-usd",
+            "usdd",
+            "frax",
+            "pax-dollar",
         ]
         for sid in stablecoin_ids:
             item = {**_btc_item(), "id": sid}
@@ -92,6 +99,7 @@ class TestInclude:
 # _to_instrument
 # ---------------------------------------------------------------------------
 
+
 class TestToInstrument:
     def test_symbol_is_uppercase(self):
         result = _to_instrument(_btc_item())
@@ -107,7 +115,16 @@ class TestToInstrument:
 
     def test_required_fields_present(self):
         result = _to_instrument(_btc_item())
-        for field in ("symbol", "pair", "name", "market_cap_usd", "volume_24h_usd", "price_usd", "rank", "asset_class"):
+        for field in (
+            "symbol",
+            "pair",
+            "name",
+            "market_cap_usd",
+            "volume_24h_usd",
+            "price_usd",
+            "rank",
+            "asset_class",
+        ):
             assert field in result
 
     def test_numeric_fields_are_float(self):
@@ -129,6 +146,7 @@ class TestToInstrument:
 # ---------------------------------------------------------------------------
 # _apply_filters
 # ---------------------------------------------------------------------------
+
 
 class TestApplyFilters:
     def _instruments(self, n: int) -> list[dict]:
@@ -170,6 +188,7 @@ class TestApplyFilters:
 # CryptoUniverse — cache behaviour
 # ---------------------------------------------------------------------------
 
+
 class TestCryptoUniverseCache:
     def _universe(self) -> CryptoUniverse:
         return CryptoUniverse(api_key=None)
@@ -189,7 +208,7 @@ class TestCryptoUniverseCache:
     @patch("data.universe_crypto.get_redis")
     def test_get_tradeable_calls_refresh_on_cache_miss(self, mock_get_redis):
         mock_redis = MagicMock()
-        mock_redis.get.return_value = None   # cache miss
+        mock_redis.get.return_value = None  # cache miss
         mock_redis.setex = MagicMock()
         mock_get_redis.return_value = mock_redis
 
@@ -207,7 +226,7 @@ class TestCryptoUniverseCache:
 
         u = self._universe()
         with patch.object(u, "_fetch_markets", return_value=[_btc_item()]):
-            result = u.get_tradeable()   # should not raise
+            result = u.get_tradeable()  # should not raise
         assert isinstance(result, list)
 
     @patch("data.universe_crypto.get_redis")
@@ -219,13 +238,14 @@ class TestCryptoUniverseCache:
 
         u = self._universe()
         with patch.object(u, "_fetch_markets", return_value=[_btc_item()]):
-            result = u.get_tradeable()   # should not raise
+            result = u.get_tradeable()  # should not raise
         assert isinstance(result, list)
 
 
 # ---------------------------------------------------------------------------
 # CryptoUniverse — refresh
 # ---------------------------------------------------------------------------
+
 
 class TestCryptoUniverseRefresh:
     @patch("data.universe_crypto.get_redis")
@@ -266,6 +286,7 @@ class TestCryptoUniverseRefresh:
 # ---------------------------------------------------------------------------
 # CryptoUniverse — convenience methods
 # ---------------------------------------------------------------------------
+
 
 class TestCryptoUniverseConvenience:
     @patch("data.universe_crypto.get_redis")

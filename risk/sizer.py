@@ -9,6 +9,7 @@ Formula:
   base_size     = current_capital * max_position_pct
   final_size    = base_size * min(half_kelly, 1.0) * vol_scalar
 """
+
 from __future__ import annotations
 
 import math
@@ -17,9 +18,9 @@ import structlog
 
 log = structlog.get_logger(__name__)
 
-_HARD_CAP_PCT = 0.02    # 2% — non-negotiable
-_VOL_TARGET = 0.20      # target annualised volatility for scaling
-_VOL_FLOOR = 0.05       # prevent division by near-zero vol
+_HARD_CAP_PCT = 0.02  # 2% — non-negotiable
+_VOL_TARGET = 0.20  # target annualised volatility for scaling
+_VOL_FLOOR = 0.05  # prevent division by near-zero vol
 
 
 class PositionSizer:
@@ -108,9 +109,9 @@ class PositionSizer:
             raise ValueError(f"current_price must be positive, got {current_price}")
 
         if lot_size == 1:
-            return int(math.floor(rupee_amount / current_price))
+            return math.floor(rupee_amount / current_price)
 
-        lots = int(math.floor(rupee_amount / (current_price * lot_size)))
+        lots = math.floor(rupee_amount / (current_price * lot_size))
         return lots * lot_size
 
     # ------------------------------------------------------------------

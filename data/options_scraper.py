@@ -16,6 +16,7 @@ Usage:
     pcr_data = scraper.get_pcr("NIFTY")
     # {"pcr": 1.23, "call_oi": 1234567, "put_oi": 1524680, "max_pain": 22400}
 """
+
 from __future__ import annotations
 
 import structlog
@@ -47,6 +48,7 @@ class OptionsPCRScraper:
         if self._session is not None:
             return self._session
         import requests
+
         session = requests.Session()
         session.headers.update(_NSE_HEADERS)
         try:
@@ -176,9 +178,7 @@ class OptionsPCRScraper:
         max_pain_strike = strikes[0]
 
         for s in strikes:
-            loss = sum(
-                (s - k) * call_oi[k] for k in strikes if k < s and k in call_oi
-            ) + sum(
+            loss = sum((s - k) * call_oi[k] for k in strikes if k < s and k in call_oi) + sum(
                 (k - s) * put_oi[k] for k in strikes if k > s and k in put_oi
             )
             if loss < min_loss:

@@ -4,11 +4,11 @@ Performance metric calculators and tearsheet printer.
 All functions operate on pd.Series of per-trade or per-bar returns.
 Risk-free rate default: 6.5% (India 10Y G-Sec approximation).
 """
+
 from __future__ import annotations
 
 from math import sqrt
 
-import numpy as np
 import pandas as pd
 
 _TRADING_DAYS = 252
@@ -130,14 +130,36 @@ def print_tearsheet(returns: pd.Series, equity_curve: pd.Series) -> None:
             return "FAIL ✗"
 
     rows = [
-        ("Sharpe Ratio",     f"{s:.3f}",          _flag(s, _THRESHOLDS["sharpe_good"], _THRESHOLDS["sharpe_min"])),
-        ("Max Drawdown",     f"{dd:.2%}",          _flag(dd, _THRESHOLDS["max_dd_good"], _THRESHOLDS["max_dd_min"], higher_is_better=False)),
-        ("Profit Factor",    f"{pf:.3f}",          _flag(pf, _THRESHOLDS["profit_factor_good"], _THRESHOLDS["profit_factor_min"])),
-        ("Win Rate",         f"{wr:.2%}",          _flag(wr, _THRESHOLDS["win_rate_good"], _THRESHOLDS["win_rate_min"])),
-        ("Calmar Ratio",     f"{cal:.3f}",         _flag(cal, _THRESHOLDS["calmar_good"], _THRESHOLDS["calmar_min"])),
-        ("Expectancy",       f"{exp:.4f}",         "PASS ✓" if exp > 0 else "FAIL ✗"),
-        ("Ann. Return",      f"{ann_ret:.2%}",     ""),
-        ("Total Trades",     f"{len(returns)}",    ""),
+        (
+            "Sharpe Ratio",
+            f"{s:.3f}",
+            _flag(s, _THRESHOLDS["sharpe_good"], _THRESHOLDS["sharpe_min"]),
+        ),
+        (
+            "Max Drawdown",
+            f"{dd:.2%}",
+            _flag(
+                dd, _THRESHOLDS["max_dd_good"], _THRESHOLDS["max_dd_min"], higher_is_better=False
+            ),
+        ),
+        (
+            "Profit Factor",
+            f"{pf:.3f}",
+            _flag(pf, _THRESHOLDS["profit_factor_good"], _THRESHOLDS["profit_factor_min"]),
+        ),
+        (
+            "Win Rate",
+            f"{wr:.2%}",
+            _flag(wr, _THRESHOLDS["win_rate_good"], _THRESHOLDS["win_rate_min"]),
+        ),
+        (
+            "Calmar Ratio",
+            f"{cal:.3f}",
+            _flag(cal, _THRESHOLDS["calmar_good"], _THRESHOLDS["calmar_min"]),
+        ),
+        ("Expectancy", f"{exp:.4f}", "PASS ✓" if exp > 0 else "FAIL ✗"),
+        ("Ann. Return", f"{ann_ret:.2%}", ""),
+        ("Total Trades", f"{len(returns)}", ""),
     ]
 
     col_w = [22, 12, 20]

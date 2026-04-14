@@ -16,6 +16,7 @@ Canonical interval names (shared across all providers)::
 
 Each provider translates these into its own API-specific names internally.
 """
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -65,7 +66,7 @@ class OHLCVProvider(ABC):
 
         The DataFrame returned must have at minimum these columns::
 
-            time (index or column), open, high, low, close, volume, symbol, interval
+            time(index or column), open, high, low, close, volume, symbol, interval
 
         Implementors should also call ``data.store.write_ohlcv`` so results are
         persisted to TimescaleDB, mirroring the existing KiteIngestor contract.

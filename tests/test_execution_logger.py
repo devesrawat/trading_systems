@@ -1,15 +1,14 @@
 """Unit tests for execution/logger.py — TDD RED phase. Mocks MLflow."""
-from unittest.mock import MagicMock, patch, call
-from datetime import date
 
-import pytest
+from datetime import date
+from unittest.mock import MagicMock, patch
 
 from execution.logger import TradeLogger
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_logger() -> TradeLogger:
     with patch("execution.logger.mlflow"):
@@ -28,6 +27,7 @@ _SAMPLE_FEATURES = {
 # ---------------------------------------------------------------------------
 # log_signal
 # ---------------------------------------------------------------------------
+
 
 class TestLogSignal:
     def test_returns_run_id_string(self):
@@ -116,6 +116,7 @@ class TestLogSignal:
 # log_outcome
 # ---------------------------------------------------------------------------
 
+
 class TestLogOutcome:
     def test_updates_run_with_exit_metrics(self):
         with patch("execution.logger.mlflow") as mock_mlflow:
@@ -142,6 +143,7 @@ class TestLogOutcome:
 # log_circuit_breaker_event
 # ---------------------------------------------------------------------------
 
+
 class TestLogCircuitBreaker:
     def test_logs_circuit_event(self):
         with patch("execution.logger.mlflow") as mock_mlflow:
@@ -162,17 +164,19 @@ class TestLogCircuitBreaker:
 # daily_summary
 # ---------------------------------------------------------------------------
 
+
 class TestDailySummary:
     def test_returns_dict(self):
-        with patch("execution.logger.mlflow"):
-            with patch("execution.logger.get_engine") as mock_engine:
-                mock_conn = MagicMock()
-                mock_conn.execute.return_value.fetchall.return_value = []
-                mock_engine.return_value.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
-                mock_engine.return_value.connect.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("execution.logger.mlflow"), patch("execution.logger.get_engine") as mock_engine:
+            mock_conn = MagicMock()
+            mock_conn.execute.return_value.fetchall.return_value = []
+            mock_engine.return_value.connect.return_value.__enter__ = MagicMock(
+                return_value=mock_conn
+            )
+            mock_engine.return_value.connect.return_value.__exit__ = MagicMock(return_value=False)
 
-                logger = TradeLogger()
-                result = logger.daily_summary()
+            logger = TradeLogger()
+            result = logger.daily_summary()
 
         assert isinstance(result, dict)
         assert "trades_today" in result
@@ -180,15 +184,16 @@ class TestDailySummary:
         assert "pnl" in result
 
     def test_no_trades_returns_zero_metrics(self):
-        with patch("execution.logger.mlflow"):
-            with patch("execution.logger.get_engine") as mock_engine:
-                mock_conn = MagicMock()
-                mock_conn.execute.return_value.fetchall.return_value = []
-                mock_engine.return_value.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
-                mock_engine.return_value.connect.return_value.__exit__ = MagicMock(return_value=False)
+        with patch("execution.logger.mlflow"), patch("execution.logger.get_engine") as mock_engine:
+            mock_conn = MagicMock()
+            mock_conn.execute.return_value.fetchall.return_value = []
+            mock_engine.return_value.connect.return_value.__enter__ = MagicMock(
+                return_value=mock_conn
+            )
+            mock_engine.return_value.connect.return_value.__exit__ = MagicMock(return_value=False)
 
-                logger = TradeLogger()
-                result = logger.daily_summary()
+            logger = TradeLogger()
+            result = logger.daily_summary()
 
         assert result["trades_today"] == 0
         assert result["win_rate"] == 0.0

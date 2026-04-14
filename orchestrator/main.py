@@ -19,14 +19,15 @@ Entry point:
     python -m orchestrator.main --market crypto
     python -m orchestrator.main --market both
 """
+
 from __future__ import annotations
 
 import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import suppress
 from datetime import datetime
-from typing import Any
 
 import pandas as pd
 import structlog
@@ -80,7 +81,7 @@ class TradingSystem:
         elif self._market_type == "both":
             self._equity_provider = get_provider()
             self._crypto_provider = get_crypto_provider()
-        else:   # equity (default)
+        else:  # equity (default)
             self._equity_provider = get_provider()
             self._crypto_provider = None
 
@@ -127,19 +128,21 @@ class TradingSystem:
 
         # A/B routing — challenger model loaded lazily on first use
         from orchestrator.ab_router import SignalRouter
+
         self._ab_router = SignalRouter(challenger_pct=settings.ab_test_pct)
 
         # Sentiment — equity only (crypto uses sources_crypto separately)
         self._sentiment = None
         if self._market_type != "crypto":
             from llm.pipeline import SentimentPipeline
+
             self._sentiment = SentimentPipeline()
 
         # ------------------------------------------------------------------
         # Universe cache
         # ------------------------------------------------------------------
         self._equity_universe: list[str] = []
-        self._equity_instruments: list[dict] = []   # full instrument dicts (token + symbol)
+        self._equity_instruments: list[dict] = []  # full instrument dicts (token + symbol)
         self._crypto_universe: list[str] = []
         self._vcp_candidates: list[dict] = []
         self._open_positions: set[str] = set()
@@ -149,6 +152,7 @@ class TradingSystem:
 
         # Regime detector — used in trading_loop to gate signal emission
         from signals.regime import RegimeDetector
+
         self._regime_detector = RegimeDetector()
         self._current_regime = None
         self._regime_last_updated: datetime | None = None
@@ -200,6 +204,7 @@ class TradingSystem:
         briefing_prefix = ""
         try:
             from llm.pipeline import LLMSentimentEngine
+
             cached = LLMSentimentEngine.get_cached_briefing()
             if cached:
                 briefing_prefix = cached + "\n\n"
@@ -242,16 +247,17 @@ class TradingSystem:
                 return
 
             # Refresh capital once per loop — avoids per-symbol broker API round-trips
-            try:
+            with suppress(Exception):  # keep stale value from previous iteration on error
                 self._cached_capital = self._broker.get_balance() or settings.initial_capital
-            except Exception:
-                pass  # keep stale value from previous iteration
 
             # Equity cycle — regime-gated; suppression does NOT block crypto
             if self._market_type in ("equity", "both"):
                 self._update_regime()
-                if self._current_regime is not None and self._regime_detector.should_suppress_new_entries(
-                    self._current_regime.state
+                if (
+                    self._current_regime is not None
+                    and self._regime_detector.should_suppress_new_entries(
+                        self._current_regime.state
+                    )
                 ):
                     log.info(
                         "equity_cycle_skipped_choppy_regime",
@@ -268,10 +274,8 @@ class TradingSystem:
 
         finally:
             # Heartbeat fires even on early returns so the health monitor stays informed
-            try:
+            with suppress(Exception):
                 HealthMonitor().write_heartbeat()
-            except Exception:
-                pass
 
     # ------------------------------------------------------------------
     # Post-market  (equity: 15:35 IST | crypto: daily midnight UTC)
@@ -293,11 +297,13 @@ class TradingSystem:
             log.error("feature_drift_check_failed", error=str(exc))
         try:
             from monitoring.reconciliation import DailyReconciler
+
             DailyReconciler(self._broker).reconcile(self._open_positions)
         except Exception as exc:
             log.error("reconciliation_failed", error=str(exc))
         try:
             from llm.pipeline import LLMSentimentEngine
+
             LLMSentimentEngine().generate_macro_briefing()
         except Exception as exc:
             log.error("macro_briefing_generation_failed", error=str(exc))
@@ -316,6 +322,7 @@ class TradingSystem:
     def retrain_check(self) -> None:
         try:
             from monitoring.mlflow_tracker import ModelDriftMonitor
+
             score = ModelDriftMonitor().compare_live_vs_backtest(window_trades=20)
             if score > 0.3:
                 log.warning("model_drift_detected", drift_score=score)
@@ -334,14 +341,15 @@ class TradingSystem:
         """
         try:
             import pandas as pd
-            from signals.train import WalkForwardTrainer
+
             from signals.features import FEATURE_COLUMNS
-            from signals.model import ModelRegistry
+            from signals.train import WalkForwardTrainer
 
             log.info("auto_retrain_started")
 
             # Fetch recent equity OHLCV from TimescaleDB for retraining
             from data.store import get_engine
+
             engine = get_engine()
             df = pd.read_sql(
                 "SELECT * FROM ohlcv WHERE time >= NOW() - INTERVAL '30 months' ORDER BY time",
@@ -356,12 +364,18 @@ class TradingSystem:
                 return
 
             trainer = WalkForwardTrainer(train_months=24, test_months=3)
-            results = trainer.run(df, features=FEATURE_COLUMNS, label="label",
-                                  experiment_name="nse_equity_signals_auto")
+            results = trainer.run(
+                df,
+                features=FEATURE_COLUMNS,
+                label="label",
+                experiment_name="nse_equity_signals_auto",
+            )
             trainer.save_drift_reference(df, FEATURE_COLUMNS)
 
             mean_auc = results.get("mean_auc", 0.0)
-            log.info("auto_retrain_complete", mean_auc=round(mean_auc, 4), n_folds=results.get("n_folds"))
+            log.info(
+                "auto_retrain_complete", mean_auc=round(mean_auc, 4), n_folds=results.get("n_folds")
+            )
 
             if mean_auc < 0.60:
                 log.info("auto_retrain_no_promote", mean_auc=mean_auc)
@@ -372,6 +386,7 @@ class TradingSystem:
 
             # Promote best fold to Production in MLflow
             import mlflow
+
             folds = results.get("folds", [])
             if not folds:
                 log.warning("auto_retrain_no_folds")
@@ -415,10 +430,8 @@ class TradingSystem:
     def shutdown(self) -> None:
         log.info("graceful_shutdown_initiated")
         for symbol in list(self._open_positions):
-            try:
+            with suppress(Exception):
                 self._executor.cancel_order(symbol)
-            except Exception:
-                pass
         log.info("graceful_shutdown_complete")
 
     # ------------------------------------------------------------------
@@ -469,14 +482,17 @@ class TradingSystem:
 
         try:
             from datetime import datetime, timedelta
+
             to_date = datetime.utcnow()
             from_date = to_date - timedelta(days=120)
 
-            df = self._crypto_provider.fetch_historical(
-                symbol, from_date, to_date, interval="day"
-            )
+            df = self._crypto_provider.fetch_historical(symbol, from_date, to_date, interval="day")
             if df is None or len(df) < 60:
-                log.debug("crypto_signal_insufficient_data", symbol=symbol, rows=len(df) if df is not None else 0)
+                log.debug(
+                    "crypto_signal_insufficient_data",
+                    symbol=symbol,
+                    rows=len(df) if df is not None else 0,
+                )
                 return
 
             features_df = build_features(df, include_labels=False)
@@ -509,7 +525,9 @@ class TradingSystem:
                 total_capital=capital,
                 max_position_pct=settings.crypto_max_position_pct,
             )
-            size_inr = crypto_sizer.size(signal_prob, vol, capital, correlation_penalty=cross_asset_penalty)
+            size_inr = crypto_sizer.size(
+                signal_prob, vol, capital, correlation_penalty=cross_asset_penalty
+            )
             qty = crypto_sizer.shares(size_inr, current_price) if current_price > 0 else 0
 
             if qty <= 0:
@@ -522,7 +540,13 @@ class TradingSystem:
                 tag=f"crypto_xgb_{signal_prob:.2f}",
             )
             self._open_positions.add(symbol)
-            log.info("crypto_order_placed", symbol=symbol, qty=qty, prob=round(signal_prob, 3), order_id=order_id)
+            log.info(
+                "crypto_order_placed",
+                symbol=symbol,
+                qty=qty,
+                prob=round(signal_prob, 3),
+                order_id=order_id,
+            )
             self._send_alert(
                 f"🪙 Crypto BUY {symbol} | prob={signal_prob:.2%} | "
                 f"qty={qty} | price={current_price:,.4f} | penalty={cross_asset_penalty:.2f}"
@@ -542,22 +566,25 @@ class TradingSystem:
         asset_class: str = "equity",
     ) -> None:
         try:
-            sentiment_score = (
-                self._sentiment.get_latest_score(symbol)
-                if self._sentiment else 0.0
-            )
+            sentiment_score = self._sentiment.get_latest_score(symbol) if self._sentiment else 0.0  # noqa: F841 — logged in signal metadata (future)
             last_row = feature_df.iloc[[-1]]
 
             # A/B routing: route signal to champion (Production) or challenger (Staging) model
-            date_str = last_row.index[-1].strftime("%Y-%m-%d") if hasattr(last_row.index[-1], "strftime") else str(last_row.index[-1])
+            date_str = (
+                last_row.index[-1].strftime("%Y-%m-%d")
+                if hasattr(last_row.index[-1], "strftime")
+                else str(last_row.index[-1])
+            )
             ab_slot = self._ab_router.route(symbol=symbol, date=date_str)
             model_to_use = self._model
             if ab_slot == "challenger":
                 if self._challenger_model is None:
                     try:
-                        self._challenger_model = self._registry.get_latest_model(segment="EQ", stage="Staging")
+                        self._challenger_model = self._registry.get_latest_model(
+                            segment="EQ", stage="Staging"
+                        )
                     except RuntimeError:
-                        ab_slot = "champion"   # fall back gracefully
+                        ab_slot = "champion"  # fall back gracefully
                 else:
                     model_to_use = self._challenger_model
 
@@ -584,6 +611,7 @@ class TradingSystem:
             # Earnings blackout — skip BUY during earnings window
             try:
                 from signals.filters import EarningsFilter
+
                 if EarningsFilter().is_blackout(symbol):
                     log.info("signal_skipped_earnings_blackout", symbol=symbol)
                     return
@@ -597,7 +625,9 @@ class TradingSystem:
 
             # Apply regime size multiplier (only for equity; crypto ignores regime for now)
             if asset_class == "equity" and self._current_regime is not None:
-                mult = self._regime_detector.get_position_size_multiplier(self._current_regime.state)
+                mult = self._regime_detector.get_position_size_multiplier(
+                    self._current_regime.state
+                )
                 size_inr *= mult
 
             qty = self._sizer.shares(size_inr, current_price) if current_price > 0 else 0
@@ -612,7 +642,13 @@ class TradingSystem:
                 tag=f"xgb_{signal_prob:.2f}",
             )
             self._open_positions.add(symbol)
-            log.info("order_placed", symbol=symbol, qty=qty, prob=round(signal_prob, 3), order_id=order_id)
+            log.info(
+                "order_placed",
+                symbol=symbol,
+                qty=qty,
+                prob=round(signal_prob, 3),
+                order_id=order_id,
+            )
 
             # Buy alert with SHAP attribution
             try:
@@ -645,6 +681,7 @@ class TradingSystem:
     def _load_crypto_universe(self) -> None:
         try:
             from data.universe_crypto import CryptoUniverse
+
             universe = CryptoUniverse(api_key=settings.coingecko_api_key)
             instruments = universe.get_tradeable(
                 top_n=_TOP_N_CRYPTO,
@@ -678,7 +715,9 @@ class TradingSystem:
             return
         try:
             from datetime import timedelta
+
             from data.ingest import NSEDataScraper
+
             nifty_token = settings.nifty50_token  # set in .env / settings
             nifty_df = get_ohlcv(nifty_token, now - timedelta(days=400), now, interval="day")
             if len(nifty_df) < 252:
@@ -750,6 +789,7 @@ class TradingSystem:
     def _check_model_drift(self) -> None:
         try:
             from monitoring.mlflow_tracker import ModelDriftMonitor
+
             score = ModelDriftMonitor().compare_live_vs_backtest(window_trades=20)
             if score > 0.3:
                 log.warning("model_drift_above_threshold", score=score)
@@ -762,6 +802,7 @@ class TradingSystem:
             return
         try:
             from monitoring.drift_detector import ConceptDriftDetector
+
             feature_map = self._fetch_equity_features()
             if not feature_map:
                 return
@@ -771,7 +812,9 @@ class TradingSystem:
             results = detector.check(live_df)
             if detector.is_drifting(live_df):
                 drifted = [f for f, p in results.items() if p < 0.05]
-                msg = f"⚠️ Feature drift detected in {len(drifted)} features: {', '.join(drifted[:5])}"
+                msg = (
+                    f"⚠️ Feature drift detected in {len(drifted)} features: {', '.join(drifted[:5])}"
+                )
                 log.warning("feature_drift_detected", drifted=drifted)
                 self._send_alert(msg)
         except Exception as exc:
@@ -780,6 +823,7 @@ class TradingSystem:
     def _send_alert(self, message: str) -> None:
         try:
             from monitoring.alerts import TelegramAlerter
+
             TelegramAlerter().send(message)
         except Exception:
             pass
@@ -789,8 +833,10 @@ class TradingSystem:
 # Entry point
 # ---------------------------------------------------------------------------
 
+
 def main() -> None:
     import argparse
+
     parser = argparse.ArgumentParser(description="NSE + Crypto Trading System")
     parser.add_argument(
         "--market",
@@ -814,6 +860,7 @@ def main() -> None:
     signal.signal(signal.SIGINT, _handle_shutdown)
 
     from orchestrator.scheduler import TradingScheduler
+
     scheduler = TradingScheduler(system, market_type=args.market)
     scheduler.start()
 

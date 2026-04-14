@@ -6,9 +6,10 @@ Provides a complete, queryable audit trail required for:
   - Model drift detection (live win rate vs backtest)
   - Daily P&L reporting via Telegram
 """
+
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 
 import mlflow
@@ -60,28 +61,36 @@ class TradeLogger:
         Returns the MLflow run_id for later outcome linkage.
         """
         with mlflow.start_run(run_name=f"{symbol}_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"):
-            mlflow.log_params({
-                "symbol": symbol,
-                "date": datetime.utcnow().strftime("%Y-%m-%d"),
-                "action": action_taken,
-                "strategy_version": strategy_version,
-                "regime": regime,
-            })
+            mlflow.log_params(
+                {
+                    "symbol": symbol,
+                    "date": datetime.utcnow().strftime("%Y-%m-%d"),
+                    "action": action_taken,
+                    "strategy_version": strategy_version,
+                    "regime": regime,
+                }
+            )
 
-            mlflow.log_metrics({
-                "signal_prob": signal_prob,
-                **{k: float(v) for k, v in features_dict.items()},
-            })
+            mlflow.log_metrics(
+                {
+                    "signal_prob": signal_prob,
+                    **{k: float(v) for k, v in features_dict.items()},
+                }
+            )
 
-            mlflow.set_tags({
-                "symbol": symbol,
-                "action": action_taken,
-                "outcome": "pending",
-            })
+            mlflow.set_tags(
+                {
+                    "symbol": symbol,
+                    "action": action_taken,
+                    "outcome": "pending",
+                }
+            )
 
             run_id = mlflow.active_run().info.run_id if mlflow.active_run() else ""
 
-        log.info("signal_logged", symbol=symbol, prob=signal_prob, action=action_taken, run_id=run_id)
+        log.info(
+            "signal_logged", symbol=symbol, prob=signal_prob, action=action_taken, run_id=run_id
+        )
         return run_id
 
     # ------------------------------------------------------------------
@@ -99,10 +108,12 @@ class TradeLogger:
         Update an existing MLflow run with the realized trade outcome.
         """
         with mlflow.start_run(run_id=run_id):
-            mlflow.log_metrics({
-                "exit_price": exit_price,
-                "pnl_pct": pnl_pct,
-            })
+            mlflow.log_metrics(
+                {
+                    "exit_price": exit_price,
+                    "pnl_pct": pnl_pct,
+                }
+            )
             mlflow.log_param("exit_date", str(exit_date))
             mlflow.set_tag("outcome", "win" if pnl_pct > 0 else "loss")
 
@@ -119,11 +130,15 @@ class TradeLogger:
     ) -> None:
         """Log a circuit breaker halt event to MLflow."""
         mlflow.set_experiment(_CIRCUIT_EXPERIMENT)
-        with mlflow.start_run(run_name=f"circuit_breaker_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"):
-            mlflow.log_params({
-                "reason": reason,
-                "timestamp": datetime.now(tz=timezone.utc).isoformat(),
-            })
+        with mlflow.start_run(
+            run_name=f"circuit_breaker_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}"
+        ):
+            mlflow.log_params(
+                {
+                    "reason": reason,
+                    "timestamp": datetime.now(tz=UTC).isoformat(),
+                }
+            )
             mlflow.log_metric("capital_at_halt", capital_at_halt)
             mlflow.set_tag("event_type", "circuit_breaker")
 
@@ -161,13 +176,14 @@ class TradeLogger:
         summary = {
             "trades_today": trades_today,
             "win_rate": round(win_rate, 4),
-            "pnl": 0.0,          # realized P&L comes from monitor.py
+            "pnl": 0.0,  # realized P&L comes from monitor.py
             "sharpe_estimate": 0.0,
         }
         log.info("daily_summary_computed", **summary)
 
         try:
             from monitoring.alerts import TelegramAlerter
+
             TelegramAlerter().alert_daily_summary(
                 trades=trades_today,
                 pnl_pct=summary["pnl"],

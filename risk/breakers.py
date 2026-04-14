@@ -7,9 +7,11 @@ Rules (non-negotiable):
   - reset_daily() and reset_weekly() update capital baselines but do NOT clear halts
   - State persisted in Redis — survives process restarts
 """
+
 from __future__ import annotations
 
 import json
+
 import structlog
 from sqlalchemy import text
 
@@ -65,9 +67,7 @@ class CircuitBreaker:
         if self._daily_start_capital > 0:
             daily_dd = (self._daily_start_capital - current_capital) / self._daily_start_capital
             if daily_dd > self.daily_limit:
-                reason = (
-                    f"daily drawdown {daily_dd:.2%} exceeded limit {self.daily_limit:.2%}"
-                )
+                reason = f"daily drawdown {daily_dd:.2%} exceeded limit {self.daily_limit:.2%}"
                 self.halt(reason)
                 return False, reason
 
@@ -75,9 +75,7 @@ class CircuitBreaker:
         if self._weekly_start_capital > 0:
             weekly_dd = (self._weekly_start_capital - current_capital) / self._weekly_start_capital
             if weekly_dd > self.weekly_limit:
-                reason = (
-                    f"weekly drawdown {weekly_dd:.2%} exceeded limit {self.weekly_limit:.2%}"
-                )
+                reason = f"weekly drawdown {weekly_dd:.2%} exceeded limit {self.weekly_limit:.2%}"
                 self.halt(reason)
                 return False, reason
 
@@ -98,7 +96,7 @@ class CircuitBreaker:
         Sends a Telegram alert and persists state.
         """
         if self._halted:
-            return   # already halted — don't overwrite reason
+            return  # already halted — don't overwrite reason
 
         self._halted = True
         self._halt_reason = reason

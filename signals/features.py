@@ -9,6 +9,7 @@ only uses data available at the bar's close time.
 FEATURE_COLUMNS: the exact list used by XGBoost at inference.
 LABEL_COLUMNS:   training-only columns — never passed to the model.
 """
+
 from __future__ import annotations
 
 from math import sqrt
@@ -29,22 +30,42 @@ _WARMUP = 252
 
 FEATURE_COLUMNS: list[str] = [
     # Momentum
-    "rsi_14", "rsi_7",
-    "macd", "macd_signal", "macd_hist", "macd_cross",
-    "mom_10", "roc_5", "roc_21",
+    "rsi_14",
+    "rsi_7",
+    "macd",
+    "macd_signal",
+    "macd_hist",
+    "macd_cross",
+    "mom_10",
+    "roc_5",
+    "roc_21",
     # Volatility
-    "atr_14", "atr_pct",
-    "bb_upper", "bb_mid", "bb_lower", "bb_position",
-    "realized_vol_10", "realized_vol_20",
+    "atr_14",
+    "atr_pct",
+    "bb_upper",
+    "bb_mid",
+    "bb_lower",
+    "bb_position",
+    "realized_vol_10",
+    "realized_vol_20",
     # Volume
-    "volume_zscore_20", "obv", "obv_slope", "vwap_dev",
+    "volume_zscore_20",
+    "obv",
+    "obv_slope",
+    "vwap_dev",
     # Trend
-    "ema_9", "ema_21", "ema_50",
-    "ema_cross_9_21", "price_vs_ema50",
-    "adx_14", "di_plus", "di_minus",
+    "ema_9",
+    "ema_21",
+    "ema_50",
+    "ema_cross_9_21",
+    "price_vs_ema50",
+    "adx_14",
+    "di_plus",
+    "di_minus",
     # Mean reversion
     "zscore_20",
-    "distance_from_52w_high", "distance_from_52w_low",
+    "distance_from_52w_high",
+    "distance_from_52w_low",
     # Regime
     "vol_regime",
 ]
@@ -60,15 +81,16 @@ LABEL_COLUMNS: list[str] = ["forward_return_5d", "label"]
 # them get NaN-filled columns so downstream code can safely select either schema.
 AUXILIARY_FEATURE_COLUMNS: list[str] = [
     "fii_net_cash_norm",  # FII net cash flow / 1e5 (normalised INR crore)
-    "india_vix",          # India VIX level
-    "sentiment_score",    # FinBERT sentiment for the symbol (-1..1)
-    "regime_code",        # RegimeState ordinal (0=TRENDING_BULL, …, 3=HIGH_VOL)
+    "india_vix",  # India VIX level
+    "sentiment_score",  # FinBERT sentiment for the symbol (-1..1)
+    "regime_code",  # RegimeState ordinal (0=TRENDING_BULL, …, 3=HIGH_VOL)
 ]
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def build_features(
     df: pd.DataFrame,
@@ -116,7 +138,6 @@ def build_features(
     close = df["close"].astype(float)
     high = df["high"].astype(float)
     low = df["low"].astype(float)
-    open_ = df["open"].astype(float)
     volume = df["volume"].astype(float)
 
     # ------------------------------------------------------------------ #
@@ -232,7 +253,9 @@ def build_features(
     # Drop NaN warm-up rows (only on core FEATURE_COLUMNS — auxiliary
     # columns may legitimately be NaN when external data is unavailable)
     # ------------------------------------------------------------------ #
-    feature_cols = [c for c in out.columns if c not in LABEL_COLUMNS + AUXILIARY_FEATURE_COLUMNS + ["close"]]
+    feature_cols = [
+        c for c in out.columns if c not in LABEL_COLUMNS + AUXILIARY_FEATURE_COLUMNS + ["close"]
+    ]
     out = out.dropna(subset=feature_cols)
 
     log.debug("features_built", rows=len(out), cols=len(out.columns))
@@ -242,6 +265,7 @@ def build_features(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _validate_input(df: pd.DataFrame) -> None:
     required = {"open", "high", "low", "close", "volume"}

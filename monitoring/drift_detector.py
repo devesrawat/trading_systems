@@ -15,20 +15,18 @@ Workflow:
     if detector.is_drifting(live_feature_df):
         send_alert(...)
 """
+
 from __future__ import annotations
 
 import json
-import random
-from typing import Any
 
-import numpy as np
 import pandas as pd
 import structlog
 
 log = structlog.get_logger(__name__)
 
 _MAX_REFERENCE_ROWS = 500  # rows to save from training set
-_DEFAULT_ALPHA = 0.05       # KS test significance level
+_DEFAULT_ALPHA = 0.05  # KS test significance level
 
 
 class ConceptDriftDetector:
@@ -57,17 +55,18 @@ class ConceptDriftDetector:
             features: Column names to track for drift.
         """
         n = min(_MAX_REFERENCE_ROWS, len(df))
-        sample = df[features].dropna().sample(n=n, random_state=42) if len(df) >= n else df[features].dropna()
+        sample = (
+            df[features].dropna().sample(n=n, random_state=42)
+            if len(df) >= n
+            else df[features].dropna()
+        )
 
-        self._reference = {
-            col: sample[col].tolist()
-            for col in features
-            if col in sample.columns
-        }
+        self._reference = {col: sample[col].tolist() for col in features if col in sample.columns}
 
         try:
             from data.redis_keys import RedisKeys
             from data.store import get_redis
+
             payload = json.dumps(self._reference)
             get_redis().set(RedisKeys.DRIFT_REFERENCE, payload)
             log.info("drift_reference_saved", features=len(self._reference), rows=n)
@@ -126,6 +125,7 @@ class ConceptDriftDetector:
         try:
             from data.redis_keys import RedisKeys
             from data.store import get_redis
+
             raw = get_redis().get(RedisKeys.DRIFT_REFERENCE)
             if raw:
                 self._reference = json.loads(raw)

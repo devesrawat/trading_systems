@@ -9,10 +9,11 @@ compute_iv_percentile(iv_series) → float [0–100]
 compute_realized_vol(price_series, window) → float (annualised)
 compute_max_pain(strikes, call_oi, put_oi) → int
 """
+
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from datetime import date, datetime, timezone
+from dataclasses import asdict, dataclass
+from datetime import UTC, date, datetime
 from typing import Any
 
 import numpy as np
@@ -33,14 +34,14 @@ class IVFeatures:
 
     symbol: str
     expiry_date: date
-    iv_rank: float          # 0–1: position of current IV in 52-week range
-    iv_percentile: float    # 0–100: percentage of days current IV exceeded
-    iv_premium: float       # implied_vol - realized_vol (positive = IV elevated)
-    put_call_ratio: float   # total put OI / total call OI
-    max_pain: int           # strike at which option writers profit most
+    iv_rank: float  # 0–1: position of current IV in 52-week range
+    iv_percentile: float  # 0–100: percentage of days current IV exceeded
+    iv_premium: float  # implied_vol - realized_vol (positive = IV elevated)
+    put_call_ratio: float  # total put OI / total call OI
+    max_pain: int  # strike at which option writers profit most
     days_to_expiry: int
-    current_iv: float       # most recent implied volatility
-    realized_vol: float     # 20-day annualised realized vol of underlying
+    current_iv: float  # most recent implied volatility
+    realized_vol: float  # 20-day annualised realized vol of underlying
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -118,12 +119,8 @@ def compute_max_pain(
     best_strike = strikes[0]
     best_pain = float("inf")
     for s in strikes:
-        call_pain = sum(
-            max(k - s, 0) * oi for k, oi in call_oi.items()
-        )
-        put_pain = sum(
-            max(s - k, 0) * oi for k, oi in put_oi.items()
-        )
+        call_pain = sum(max(k - s, 0) * oi for k, oi in call_oi.items())
+        put_pain = sum(max(s - k, 0) * oi for k, oi in put_oi.items())
         total = call_pain + put_pain
         if total < best_pain:
             best_pain = total
@@ -221,22 +218,26 @@ _INSERT_IV_SNAPSHOT = text("""
 def _write_iv_snapshot(features: IVFeatures, signal_type: str | None = None) -> None:
     """Persist an IVFeatures snapshot to the iv_snapshots hypertable."""
     from data.store import get_engine  # local import avoids circular dependency
+
     try:
         engine = get_engine()
         with engine.connect() as conn:
-            conn.execute(_INSERT_IV_SNAPSHOT, {
-                "time": datetime.now(tz=timezone.utc),
-                "symbol": features.symbol,
-                "expiry_date": features.expiry_date,
-                "iv_rank": features.iv_rank,
-                "iv_percentile": features.iv_percentile,
-                "iv_premium": features.iv_premium,
-                "put_call_ratio": features.put_call_ratio,
-                "max_pain": features.max_pain,
-                "days_to_expiry": features.days_to_expiry,
-                "current_iv": features.current_iv,
-                "realized_vol": features.realized_vol,
-            })
+            conn.execute(
+                _INSERT_IV_SNAPSHOT,
+                {
+                    "time": datetime.now(tz=UTC),
+                    "symbol": features.symbol,
+                    "expiry_date": features.expiry_date,
+                    "iv_rank": features.iv_rank,
+                    "iv_percentile": features.iv_percentile,
+                    "iv_premium": features.iv_premium,
+                    "put_call_ratio": features.put_call_ratio,
+                    "max_pain": features.max_pain,
+                    "days_to_expiry": features.days_to_expiry,
+                    "current_iv": features.current_iv,
+                    "realized_vol": features.realized_vol,
+                },
+            )
             conn.commit()
         log.debug("iv_snapshot_written", symbol=features.symbol, expiry=str(features.expiry_date))
     except Exception as exc:

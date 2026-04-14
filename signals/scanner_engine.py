@@ -22,11 +22,12 @@ Usage
     engine = ScannerEngine([VCPStrategy(), RSBreakoutStrategy(), TightClosesStrategy()])
     results = engine.run(symbols)   # {"vcp": [...], "rs_breakout": [...], ...}
 """
+
 from __future__ import annotations
 
 import os
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed, wait
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
 from typing import Any
 
@@ -46,6 +47,7 @@ _WORKERS = min(os.cpu_count() or 4, 8)
 # Worker entry point — runs inside each subprocess
 # ---------------------------------------------------------------------------
 
+
 def _worker(
     strategy_fqname: str,
     symbol: str,
@@ -58,6 +60,7 @@ def _worker(
     Running inside a worker process — no shared state with parent.
     """
     import pandas as pd
+
     from signals.base_strategy import BaseStrategy
 
     strategy = BaseStrategy.from_fqname(strategy_fqname)
@@ -76,6 +79,7 @@ def _worker(
 # ---------------------------------------------------------------------------
 # Data fetch — one query per unique (interval, lookback_days)
 # ---------------------------------------------------------------------------
+
 
 def _fetch_group(
     symbols: list[str],
@@ -113,6 +117,7 @@ def _fetch_group(
 # ScannerEngine
 # ---------------------------------------------------------------------------
 
+
 class ScannerEngine:
     """
     Runs multiple strategies against a universe of symbols in one pass.
@@ -131,7 +136,7 @@ class ScannerEngine:
         if not strategies:
             raise ValueError("At least one strategy is required.")
         self._strategies = strategies
-        self._workers    = workers
+        self._workers = workers
 
     def run(self, symbols: list[str]) -> dict[str, list[dict[str, Any]]]:
         """
@@ -165,14 +170,15 @@ class ScannerEngine:
         # ----------------------------------------------------------------
         symbol_data: dict[str, dict[str, list[dict]]] = {}
 
-        def _fetch_and_index(interval: str, strats: list[BaseStrategy]) -> tuple[str, dict[str, list[dict]]]:
+        def _fetch_and_index(
+            interval: str, strats: list[BaseStrategy]
+        ) -> tuple[str, dict[str, list[dict]]]:
             lookback = max(s.lookback_days for s in strats)
             df = _fetch_group(symbols, interval, lookback)
             if df.empty:
                 return interval, {}
             return interval, {
-                sym: grp.to_dict(orient="records")
-                for sym, grp in df.groupby("symbol", sort=False)
+                sym: grp.to_dict(orient="records") for sym, grp in df.groupby("symbol", sort=False)
             }
 
         with ThreadPoolExecutor(max_workers=len(groups) or 1) as io_pool:
@@ -191,9 +197,7 @@ class ScannerEngine:
         # ----------------------------------------------------------------
         results: dict[str, list[dict]] = defaultdict(list)
         total_tasks = sum(
-            len(sym_map)
-            for interval, sym_map in symbol_data.items()
-            for _ in groups[interval]
+            len(sym_map) for interval, sym_map in symbol_data.items() for _ in groups[interval]
         )
 
         log.info(
@@ -214,9 +218,7 @@ class ScannerEngine:
                         f = pool.submit(_worker, fqname, sym, records)
                         futures[f] = strategy.name
 
-            done = 0
-            for future in as_completed(futures):
-                done += 1
+            for done, future in enumerate(as_completed(futures), 1):
                 strategy_name, result = future.result()
                 if result is not None:
                     results[strategy_name].append(result)
@@ -231,7 +233,7 @@ class ScannerEngine:
         # ----------------------------------------------------------------
         # 4. Sort each strategy's results by its preferred sort key
         # ----------------------------------------------------------------
-        strategy_map = {s.name: s for s in self._strategies}
+        strategy_map = {s.name: s for s in self._strategies}  # noqa: F841 — reserved for future lookup
         final: dict[str, list[dict]] = {}
         for s in self._strategies:
             hits = results.get(s.name, [])

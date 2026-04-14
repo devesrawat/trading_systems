@@ -1,7 +1,7 @@
 """Unit tests for backtest/ — TDD RED phase. Pure arithmetic, no DB needed."""
+
 import numpy as np
 import pandas as pd
-import pytest
 
 from backtest.costs import NSECostModel
 from backtest.metrics import (
@@ -14,10 +14,10 @@ from backtest.metrics import (
     win_rate,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _pos_returns(n: int = 100, mean: float = 0.001, std: float = 0.01) -> pd.Series:
     rng = np.random.default_rng(0)
@@ -37,13 +37,14 @@ def _equity_curve(returns: pd.Series) -> pd.Series:
 # NSECostModel
 # ---------------------------------------------------------------------------
 
+
 class TestNSECostModel:
     def test_equity_cost_buy_no_stt(self):
         """STT only applies on SELL side for equity delivery."""
         model = NSECostModel()
         buy_cost = model.equity_cost(10_000.0, side="BUY")
         sell_cost = model.equity_cost(10_000.0, side="SELL")
-        assert sell_cost > buy_cost   # sell includes STT
+        assert sell_cost > buy_cost  # sell includes STT
 
     def test_equity_cost_positive(self):
         model = NSECostModel()
@@ -64,7 +65,7 @@ class TestNSECostModel:
         cost = model.equity_cost(10_000.0, side="BUY")
         brokerage = min(20.0, 10_000.0 * 0.0003)
         gst = brokerage * 0.18
-        assert cost >= gst   # GST must be included
+        assert cost >= gst  # GST must be included
 
     def test_stamp_duty_only_on_buy(self):
         model = NSECostModel()
@@ -104,6 +105,7 @@ class TestNSECostModel:
 # sharpe_ratio
 # ---------------------------------------------------------------------------
 
+
 class TestSharpeRatio:
     def test_positive_returns_positive_sharpe(self):
         r = _pos_returns(252)
@@ -118,7 +120,7 @@ class TestSharpeRatio:
     def test_zero_std_returns_zero(self):
         r = pd.Series([0.001] * 252)
         s = sharpe_ratio(r)
-        assert s > 0   # positive constant return → positive Sharpe
+        assert s > 0  # positive constant return → positive Sharpe
 
     def test_annualised_uses_252_days(self):
         daily_return = 0.001
@@ -138,6 +140,7 @@ class TestSharpeRatio:
 # max_drawdown
 # ---------------------------------------------------------------------------
 
+
 class TestMaxDrawdown:
     def test_returns_negative_fraction(self):
         r = _pos_returns(100)
@@ -153,7 +156,7 @@ class TestMaxDrawdown:
     def test_known_drawdown(self):
         eq = pd.Series([100.0, 120.0, 80.0, 90.0])
         dd = max_drawdown(eq)
-        assert abs(dd - (-1/3)) < 0.01   # 120 → 80 = -33%
+        assert abs(dd - (-1 / 3)) < 0.01  # 120 → 80 = -33%
 
     def test_full_loss_is_minus_one(self):
         eq = pd.Series([100.0, 50.0, 0.001])
@@ -164,6 +167,7 @@ class TestMaxDrawdown:
 # ---------------------------------------------------------------------------
 # profit_factor
 # ---------------------------------------------------------------------------
+
 
 class TestProfitFactor:
     def test_profitable_strategy_above_one(self):
@@ -191,6 +195,7 @@ class TestProfitFactor:
 # win_rate
 # ---------------------------------------------------------------------------
 
+
 class TestWinRate:
     def test_all_positive_is_one(self):
         r = pd.Series([0.01, 0.02, 0.005])
@@ -209,6 +214,7 @@ class TestWinRate:
 # expectancy
 # ---------------------------------------------------------------------------
 
+
 class TestExpectancy:
     def test_positive_expectancy_for_good_strategy(self):
         r = _pos_returns(200, mean=0.003)
@@ -224,6 +230,7 @@ class TestExpectancy:
 # ---------------------------------------------------------------------------
 # calmar_ratio
 # ---------------------------------------------------------------------------
+
 
 class TestCalmarRatio:
     def test_positive_for_positive_returns(self):
@@ -242,6 +249,7 @@ class TestCalmarRatio:
 # ---------------------------------------------------------------------------
 # print_tearsheet
 # ---------------------------------------------------------------------------
+
 
 class TestPrintTearsheet:
     def test_runs_without_error(self, capsys):

@@ -1,10 +1,9 @@
 """Unit tests for data/store.py — mocks DB and Redis, no real connections."""
+
 import json
-from datetime import date
 from unittest.mock import MagicMock, patch
 
 import pandas as pd
-import pytest
 
 from data.store import (
     _df_to_records,
@@ -15,10 +14,10 @@ from data.store import (
     write_tick,
 )
 
-
 # ---------------------------------------------------------------------------
 # _df_to_records
 # ---------------------------------------------------------------------------
+
 
 class TestDfToRecords:
     def test_index_named_time_is_reset(self):
@@ -64,6 +63,7 @@ class TestDfToRecords:
 # Redis tick cache
 # ---------------------------------------------------------------------------
 
+
 class TestTickCache:
     @patch("data.store.get_redis")
     def test_write_tick_sets_key_with_ttl(self, mock_get_redis):
@@ -101,6 +101,7 @@ class TestTickCache:
 # get_universe
 # ---------------------------------------------------------------------------
 
+
 class TestGetUniverse:
     def test_filters_by_segment(self, tmp_path, monkeypatch):
         instruments = [
@@ -111,6 +112,7 @@ class TestGetUniverse:
         instruments_file.write_text(json.dumps({"instruments": instruments}))
 
         import data.store as store_mod
+
         monkeypatch.setattr(store_mod, "_INSTRUMENTS_PATH", instruments_file)
 
         result = get_universe(segment="EQ")
@@ -122,6 +124,7 @@ class TestGetUniverse:
         instruments_file.write_text(json.dumps({"instruments": []}))
 
         import data.store as store_mod
+
         monkeypatch.setattr(store_mod, "_INSTRUMENTS_PATH", instruments_file)
 
         result = get_universe()
@@ -131,6 +134,7 @@ class TestGetUniverse:
 # ---------------------------------------------------------------------------
 # Crypto tick cache
 # ---------------------------------------------------------------------------
+
 
 class TestCryptoTickCache:
     @patch("data.store.get_redis")

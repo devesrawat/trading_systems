@@ -4,6 +4,7 @@ Zerodha Kite Connect adapter implementing :class:`OHLCVProvider`.
 This is a thin wrapper around :class:`data.ingest.KiteIngestor` so that Kite
 can be used interchangeably with other providers via the common interface.
 """
+
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -13,7 +14,6 @@ import pandas as pd
 import structlog
 
 from data.ingest import KiteIngestor
-from data.store import get_redis
 
 from .base import OHLCVProvider
 
@@ -57,8 +57,7 @@ class KiteProvider(OHLCVProvider):
         token = self._symbol_to_token.get(symbol)
         if token is None:
             raise ValueError(
-                f"No instrument token registered for '{symbol}'. "
-                "Call register_instruments() first."
+                f"No instrument token registered for '{symbol}'. Call register_instruments() first."
             )
         return self._ingestor.fetch_historical(
             instrument_token=token,

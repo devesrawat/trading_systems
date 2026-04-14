@@ -11,15 +11,18 @@ Both expose:
   label_regimes(df)            → df copy with 'regime' + 'vol_regime_hmm' columns
   save(path) / load(path)      → joblib serialisation
 """
+
 from __future__ import annotations
 
+from dataclasses import dataclass
+from enum import Enum
 from math import sqrt
-from pathlib import Path
 from typing import Literal
 
 import joblib
 import numpy as np
 import pandas as pd
+import pandas_ta as _pta
 import structlog
 from hmmlearn import hmm
 
@@ -34,6 +37,7 @@ _DEFAULT_MULTIPLIER = 1.5
 # ---------------------------------------------------------------------------
 # HMM-based detector
 # ---------------------------------------------------------------------------
+
 
 class VolRegimeDetector:
     """
@@ -51,7 +55,7 @@ class VolRegimeDetector:
         self._n_iter = n_iter
         self._random_state = random_state
         self._model: hmm.GaussianHMM | None = None
-        self._high_vol_state: int = 1   # determined after fit
+        self._high_vol_state: int = 1  # determined after fit
 
     @property
     def is_fitted(self) -> bool:
@@ -61,7 +65,7 @@ class VolRegimeDetector:
     # Fit
     # ------------------------------------------------------------------
 
-    def fit(self, returns_series: pd.Series) -> "VolRegimeDetector":
+    def fit(self, returns_series: pd.Series) -> VolRegimeDetector:
         """Train the HMM on *returns_series* (daily or intraday log returns)."""
         X = self._to_features(returns_series)
         model = hmm.GaussianHMM(
@@ -79,10 +83,7 @@ class VolRegimeDetector:
     def _identify_high_vol_state(self) -> int:
         """Return the state index with the largest variance."""
         assert self._model is not None
-        variances = [
-            float(np.mean(np.diag(self._model.covars_[s])))
-            for s in range(self._n_states)
-        ]
+        variances = [float(np.mean(np.diag(self._model.covars_[s]))) for s in range(self._n_states)]
         return int(np.argmax(variances))
 
     # ------------------------------------------------------------------
@@ -143,7 +144,7 @@ class VolRegimeDetector:
         log.info("regime_model_saved", path=path)
 
     @classmethod
-    def load(cls, path: str) -> "VolRegimeDetector":
+    def load(cls, path: str) -> VolRegimeDetector:
         """Load a previously saved VolRegimeDetector from *path*."""
         payload = joblib.load(path)
         obj = cls(n_states=payload["n_states"])
@@ -166,6 +167,7 @@ class VolRegimeDetector:
 # ---------------------------------------------------------------------------
 # Rule-based fallback
 # ---------------------------------------------------------------------------
+
 
 class SimpleVolRegime:
     """
@@ -225,7 +227,7 @@ class SimpleVolRegime:
             return "normal"
 
         regimes = pd.Series(
-            [_classify_row(v, m) for v, m in zip(vol, rolling_median)],
+            [_classify_row(v, m) for v, m in zip(vol, rolling_median, strict=False)],
             index=df.index,
             name="regime",
         )
@@ -245,11 +247,6 @@ class SimpleVolRegime:
 # ---------------------------------------------------------------------------
 # Multi-factor regime detector (Phase 1 — M3 spec)
 # ---------------------------------------------------------------------------
-from dataclasses import dataclass
-from enum import Enum
-
-import numpy as np
-import pandas_ta as _pta
 
 
 class RegimeState(Enum):
@@ -264,9 +261,9 @@ class RegimeMetrics:
     state: RegimeState
     adx_14: float
     vix: float
-    nifty_200dma_slope: float    # % change of 200-DMA over 20 days
-    realized_vol_ratio: float    # 20d realized vol / 252d realized vol
-    score: float                 # 0.0-1.0 confidence in classification
+    nifty_200dma_slope: float  # % change of 200-DMA over 20 days
+    realized_vol_ratio: float  # 20d realized vol / 252d realized vol
+    score: float  # 0.0-1.0 confidence in classification
 
 
 class RegimeDetector:
@@ -296,8 +293,12 @@ class RegimeDetector:
         state = self._classify(adx, india_vix, vol_ratio, dma_slope)
         score = self._compute_confidence(adx, india_vix, vol_ratio)
         return RegimeMetrics(
-            state=state, adx_14=adx, vix=india_vix,
-            nifty_200dma_slope=dma_slope, realized_vol_ratio=vol_ratio, score=score,
+            state=state,
+            adx_14=adx,
+            vix=india_vix,
+            nifty_200dma_slope=dma_slope,
+            realized_vol_ratio=vol_ratio,
+            score=score,
         )
 
     def get_position_size_multiplier(self, state: RegimeState) -> float:

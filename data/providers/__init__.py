@@ -18,6 +18,7 @@ The equity provider is selected via the ``DATA_PROVIDER`` env var (kite | upstox
 The crypto provider is always Binance (the only free, no-auth option that covers
 all major pairs with full WebSocket support).
 """
+
 from __future__ import annotations
 
 from .base import OHLCVProvider
@@ -49,9 +50,7 @@ def get_provider() -> OHLCVProvider:
             access_token=settings.upstox_access_token,
         )
 
-    raise ValueError(
-        f"Unknown data provider '{name}'. Set DATA_PROVIDER to 'kite' or 'upstox'."
-    )
+    raise ValueError(f"Unknown data provider '{name}'. Set DATA_PROVIDER to 'kite' or 'upstox'.")
 
 
 def get_crypto_provider() -> OHLCVProvider:
@@ -67,6 +66,7 @@ def get_crypto_provider() -> OHLCVProvider:
         provider.register_instruments({"BTC": "BTCUSDT", "ETH": "ETHUSDT"})
     """
     from config.settings import settings
+
     from .binance import BinanceProvider
 
     return BinanceProvider(
@@ -75,4 +75,4 @@ def get_crypto_provider() -> OHLCVProvider:
     )
 
 
-__all__ = ["OHLCVProvider", "get_provider", "get_crypto_provider"]
+__all__ = ["OHLCVProvider", "get_crypto_provider", "get_provider"]

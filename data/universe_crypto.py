@@ -13,20 +13,20 @@ Returned instrument dicts follow the same schema as the NSE universe so the
 rest of the pipeline can treat them uniformly::
 
     {
-        "symbol":          "BTC",         # short ticker
-        "pair":            "BTCUSDT",     # Binance trading pair
-        "name":            "Bitcoin",     # full name
-        "market_cap_usd":  float,
-        "volume_24h_usd":  float,
-        "price_usd":       float,
-        "rank":            int,           # CoinGecko market cap rank
-        "asset_class":     "crypto",
+        "symbol": "BTC",  # short ticker
+        "pair": "BTCUSDT",  # Binance trading pair
+        "name": "Bitcoin",  # full name
+        "market_cap_usd": float,
+        "volume_24h_usd": float,
+        "price_usd": float,
+        "rank": int,  # CoinGecko market cap rank
+        "asset_class": "crypto",
     }
 """
+
 from __future__ import annotations
 
 import json
-import time
 from typing import Any
 
 import requests
@@ -38,17 +38,26 @@ from data.store import get_redis
 log = structlog.get_logger(__name__)
 
 _COINGECKO_BASE = "https://api.coingecko.com/api/v3"
-_CACHE_TTL_SECONDS = 3600   # 1 hour — free tier allows ~30 req/min, no need to poll often
+_CACHE_TTL_SECONDS = 3600  # 1 hour — free tier allows ~30 req/min, no need to poll often
 _REQUEST_TIMEOUT = 15
 
 # Quote currency for Binance pairs (USDT is the most liquid on Binance)
 _QUOTE_CURRENCY = "usdt"
 
 # Well-known stablecoins to exclude from the tradeable universe
-_STABLECOIN_IDS = frozenset({
-    "tether", "usd-coin", "dai", "binance-usd", "trueusd",
-    "first-digital-usd", "usdd", "frax", "pax-dollar",
-})
+_STABLECOIN_IDS = frozenset(
+    {
+        "tether",
+        "usd-coin",
+        "dai",
+        "binance-usd",
+        "trueusd",
+        "first-digital-usd",
+        "usdd",
+        "frax",
+        "pax-dollar",
+    }
+)
 
 
 class CryptoUniverse:
@@ -67,10 +76,12 @@ class CryptoUniverse:
     def __init__(self, api_key: str | None = None) -> None:
         self._api_key = api_key
         self._session = requests.Session()
-        self._session.headers.update({
-            "Accept":     "application/json",
-            "User-Agent": "nse-trading-system/1.0 (personal algo trader)",
-        })
+        self._session.headers.update(
+            {
+                "Accept": "application/json",
+                "User-Agent": "nse-trading-system/1.0 (personal algo trader)",
+            }
+        )
         if api_key:
             self._session.headers["x-cg-demo-api-key"] = api_key
 
@@ -150,12 +161,12 @@ class CryptoUniverse:
     def _fetch_markets(self, per_page: int = 250, page: int = 1) -> list[dict]:
         """Fetch the ``/coins/markets`` endpoint."""
         params: dict[str, Any] = {
-            "vs_currency":            "usd",
-            "order":                  "market_cap_desc",
-            "per_page":               per_page,
-            "page":                   page,
+            "vs_currency": "usd",
+            "order": "market_cap_desc",
+            "per_page": per_page,
+            "page": page,
             "price_change_percentage": "24h",
-            "sparkline":              "false",
+            "sparkline": "false",
         }
         try:
             resp = self._session.get(
@@ -196,28 +207,29 @@ class CryptoUniverse:
 # Private helpers
 # ---------------------------------------------------------------------------
 
+
 def _include(item: dict) -> bool:
     """Return False for stablecoins and items with missing market data."""
-    if item.get("id", "") in _STABLECOIN_IDS:
-        return False
-    if item.get("market_cap") is None or item.get("total_volume") is None:
-        return False
-    return True
+    return (
+        item.get("id", "") not in _STABLECOIN_IDS
+        and item.get("market_cap") is not None
+        and item.get("total_volume") is not None
+    )
 
 
 def _to_instrument(item: dict) -> dict[str, Any]:
     """Normalise a CoinGecko ``/coins/markets`` entry to the system schema."""
     symbol = (item.get("symbol") or "").upper()
     return {
-        "symbol":         symbol,
-        "pair":           f"{symbol}{_QUOTE_CURRENCY.upper()}",   # e.g. "BTCUSDT"
-        "name":           item.get("name", ""),
-        "coingecko_id":   item.get("id", ""),
+        "symbol": symbol,
+        "pair": f"{symbol}{_QUOTE_CURRENCY.upper()}",  # e.g. "BTCUSDT"
+        "name": item.get("name", ""),
+        "coingecko_id": item.get("id", ""),
         "market_cap_usd": float(item.get("market_cap") or 0),
         "volume_24h_usd": float(item.get("total_volume") or 0),
-        "price_usd":      float(item.get("current_price") or 0),
-        "rank":           int(item.get("market_cap_rank") or 9999),
-        "asset_class":    "crypto",
+        "price_usd": float(item.get("current_price") or 0),
+        "rank": int(item.get("market_cap_rank") or 9999),
+        "asset_class": "crypto",
     }
 
 

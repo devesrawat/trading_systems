@@ -15,12 +15,11 @@ Metrics exported:
   trading_signal_count_total   (counter)
   trading_orders_total         (counter, labels: side, paper)
 """
+
 from __future__ import annotations
 
-import threading
-
 import structlog
-from prometheus_client import Counter, Gauge, start_http_server
+from prometheus_client import Counter, start_http_server
 
 log = structlog.get_logger(__name__)
 

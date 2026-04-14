@@ -1,33 +1,35 @@
 """Tests for new monitoring modules: ConceptDriftDetector, HealthMonitor, DailyReconciler."""
+
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
-import pytest
 
 from monitoring.drift_detector import ConceptDriftDetector
 from monitoring.health import HealthMonitor
 from monitoring.reconciliation import DailyReconciler
 
-
 # ---------------------------------------------------------------------------
 # ConceptDriftDetector
 # ---------------------------------------------------------------------------
+
 
 class TestConceptDriftDetector:
     """KS-test based feature drift detection."""
 
     def _make_df(self, n: int = 100, seed: int = 0) -> pd.DataFrame:
         rng = np.random.default_rng(seed)
-        return pd.DataFrame({
-            "rsi_14": rng.uniform(20, 80, n),
-            "ema_ratio_50_200": rng.uniform(0.9, 1.1, n),
-            "realized_vol_20": rng.uniform(0.1, 0.4, n),
-        })
+        return pd.DataFrame(
+            {
+                "rsi_14": rng.uniform(20, 80, n),
+                "ema_ratio_50_200": rng.uniform(0.9, 1.1, n),
+                "realized_vol_20": rng.uniform(0.1, 0.4, n),
+            }
+        )
 
     def _make_redis(self, data: dict | None = None) -> MagicMock:
         r = MagicMock()
@@ -122,12 +124,13 @@ class TestConceptDriftDetector:
         mock_redis.set.side_effect = Exception("Redis down")
 
         with patch("data.store.get_redis", return_value=mock_redis):
-            ConceptDriftDetector().fit(df, features)   # must not raise
+            ConceptDriftDetector().fit(df, features)  # must not raise
 
 
 # ---------------------------------------------------------------------------
 # HealthMonitor
 # ---------------------------------------------------------------------------
+
 
 class TestHealthMonitor:
     def test_write_heartbeat_sets_redis_key(self):
@@ -156,7 +159,7 @@ class TestHealthMonitor:
         mock_redis = MagicMock()
         mock_redis.set.side_effect = Exception("connection refused")
         with patch("data.store.get_redis", return_value=mock_redis):
-            HealthMonitor().write_heartbeat()   # must not raise
+            HealthMonitor().write_heartbeat()  # must not raise
 
     def test_send_alert_if_stale_no_key_outside_market_hours(self):
         """No alert when Redis key is missing but outside market hours."""
@@ -164,8 +167,10 @@ class TestHealthMonitor:
         mock_redis.get.return_value = None
 
         # With no heartbeat key and no market hours → should not alert
-        with patch("data.store.get_redis", return_value=mock_redis), \
-             patch("monitoring.alerts.TelegramAlerter") as mock_alerter:
+        with (
+            patch("data.store.get_redis", return_value=mock_redis),
+            patch("monitoring.alerts.TelegramAlerter") as mock_alerter,
+        ):
             # Only assert no crash — hours check is internal
             HealthMonitor().send_alert_if_stale()
 
@@ -186,6 +191,7 @@ class TestHealthMonitor:
 # DailyReconciler
 # ---------------------------------------------------------------------------
 
+
 class TestDailyReconciler:
     def _make_broker(self) -> MagicMock:
         broker = MagicMock()
@@ -197,8 +203,10 @@ class TestDailyReconciler:
         mock_redis = MagicMock()
         mock_redis.get.return_value = None
 
-        with patch("data.store.get_redis", return_value=mock_redis), \
-             patch("monitoring.alerts.TelegramAlerter") as mock_alerter:
+        with (
+            patch("data.store.get_redis", return_value=mock_redis),
+            patch("monitoring.alerts.TelegramAlerter") as mock_alerter,
+        ):
             DailyReconciler(broker).reconcile(set())
 
         mock_alerter.return_value.send.assert_not_called()
@@ -210,8 +218,10 @@ class TestDailyReconciler:
         mock_redis = MagicMock()
         mock_redis.get.return_value = b"1500.0"  # entry price matches
 
-        with patch("data.store.get_redis", return_value=mock_redis), \
-             patch("monitoring.alerts.TelegramAlerter") as mock_alerter:
+        with (
+            patch("data.store.get_redis", return_value=mock_redis),
+            patch("monitoring.alerts.TelegramAlerter") as mock_alerter,
+        ):
             DailyReconciler(broker).reconcile({"RELIANCE"})
 
         mock_alerter.return_value.send.assert_not_called()
@@ -223,8 +233,10 @@ class TestDailyReconciler:
         mock_redis = MagicMock()
         mock_redis.get.return_value = b"1000.0"  # entry was 1000, now 2000 (100% drift)
 
-        with patch("data.store.get_redis", return_value=mock_redis), \
-             patch("monitoring.alerts.TelegramAlerter") as mock_alerter:
+        with (
+            patch("data.store.get_redis", return_value=mock_redis),
+            patch("monitoring.alerts.TelegramAlerter") as mock_alerter,
+        ):
             DailyReconciler(broker).reconcile({"RELIANCE"})
 
         mock_alerter.return_value.send.assert_called()
@@ -236,4 +248,4 @@ class TestDailyReconciler:
         mock_redis.get.return_value = b"1500.0"
 
         with patch("data.store.get_redis", return_value=mock_redis):
-            DailyReconciler(broker).reconcile({"RELIANCE"})   # must not raise
+            DailyReconciler(broker).reconcile({"RELIANCE"})  # must not raise

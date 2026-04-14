@@ -6,10 +6,10 @@ ScannerEngine integration is tested by patching the DB fetch and
 replacing ProcessPoolExecutor with a ThreadPoolExecutor so tests
 run without spawning subprocesses.
 """
+
 from __future__ import annotations
 
-from datetime import date, timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import numpy as np
 import pandas as pd
@@ -20,14 +20,14 @@ from signals.strategies.rs_breakout import RSBreakoutStrategy
 from signals.strategies.tight_closes import TightClosesStrategy
 from signals.strategies.vcp import VCPStrategy
 
-
 # ---------------------------------------------------------------------------
 # Shared synthetic data helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_daily(
     n: int = 300,
-    trend: str = "up",       # "up" | "flat" | "down"
+    trend: str = "up",  # "up" | "flat" | "down"
     seed: int = 0,
 ) -> pd.DataFrame:
     """
@@ -47,14 +47,14 @@ def _make_daily(
     close = base + drift + rng.normal(0, 8, n).cumsum()
     close = np.abs(close) + 10
 
-    high   = close + rng.uniform(3, 15, n)
-    low    = close - rng.uniform(3, 15, n)
-    low    = np.maximum(low, 1.0)
-    open_  = low + rng.uniform(0, 1, n) * (high - low)
+    high = close + rng.uniform(3, 15, n)
+    low = close - rng.uniform(3, 15, n)
+    low = np.maximum(low, 1.0)
+    open_ = low + rng.uniform(0, 1, n) * (high - low)
     volume = rng.integers(500_000, 5_000_000, n).astype(float)
 
     idx = pd.date_range("2022-01-03", periods=n, freq="B")
-    df  = pd.DataFrame(
+    df = pd.DataFrame(
         {"open": open_, "high": high, "low": low, "close": close, "volume": volume},
         index=idx,
     )
@@ -69,6 +69,7 @@ def _make_records(df: pd.DataFrame) -> list[dict]:
 # ---------------------------------------------------------------------------
 # BaseStrategy
 # ---------------------------------------------------------------------------
+
 
 class TestBaseStrategy:
     def test_fqname_roundtrip(self):
@@ -86,7 +87,7 @@ class TestBaseStrategy:
         s = VCPStrategy()
         df = _make_daily(n=50)
         result = s.prepare(df.reset_index())
-        assert result is None   # < min_bars=200
+        assert result is None  # < min_bars=200
 
     def test_prepare_drops_circuit_hit_rows(self):
         s = VCPStrategy()
@@ -103,9 +104,13 @@ class TestBaseStrategy:
         s = VCPStrategy()
         # VCP overrides sort_key, but base default is "symbol"
         from signals.base_strategy import BaseStrategy as BS
+
         class _Stub(BS):
             name = "stub"
-            def scan(self, sym, df): return None
+
+            def scan(self, sym, df):
+                return None
+
         stub = _Stub()
         assert stub.sort_key({"symbol": "RELIANCE"}) == "RELIANCE"
 
@@ -113,6 +118,7 @@ class TestBaseStrategy:
 # ---------------------------------------------------------------------------
 # VCPStrategy
 # ---------------------------------------------------------------------------
+
 
 class TestVCPStrategy:
     def _passing_df(self) -> pd.DataFrame:
@@ -141,19 +147,19 @@ class TestVCPStrategy:
         df = _make_daily(n=300, trend="up")
         # Manufacture a strong uptrend that passes trend template
         close = df["close"].values
-        close = np.sort(close)   # monotonically rising — maximises passing chance
+        close = np.sort(close)  # monotonically rising — maximises passing chance
         df = df.copy()
         df["close"] = close
-        df["high"]  = close + 5
-        df["low"]   = close - 5
+        df["high"] = close + 5
+        df["low"] = close - 5
         # Try scanning — result may be None if no contractions found
         result = s.scan("RELIANCE", df)
         if result is not None:
-            assert result["symbol"]   == "RELIANCE"
+            assert result["symbol"] == "RELIANCE"
             assert result["strategy"] == "vcp"
-            assert "pivot_buy"        in result
-            assert "contractions"     in result
-            assert "swing_ranges"     in result
+            assert "pivot_buy" in result
+            assert "contractions" in result
+            assert "swing_ranges" in result
 
     def test_sort_key_is_distance_to_pivot(self):
         s = VCPStrategy()
@@ -165,29 +171,33 @@ class TestVCPStrategy:
 # RSBreakoutStrategy
 # ---------------------------------------------------------------------------
 
+
 class TestRSBreakoutStrategy:
     def _build_breakout_df(self) -> pd.DataFrame:
         """Price that is at a new 52-week high with volume surge today."""
-        n   = 260
+        n = 260
         rng = np.random.default_rng(1)
         # Steadily rising close so 52-week high is at the end
-        close  = np.linspace(500, 1500, n) + rng.normal(0, 5, n)
+        close = np.linspace(500, 1500, n) + rng.normal(0, 5, n)
         volume = np.full(n, 1_000_000.0)
         # Make today's volume a surge
         volume[-1] = 2_000_000.0
         idx = pd.date_range("2022-01-03", periods=n, freq="B")
-        df  = pd.DataFrame({
-            "open":   close - 2,
-            "high":   close + 2,
-            "low":    close - 2,
-            "close":  close,
-            "volume": volume,
-        }, index=idx)
+        df = pd.DataFrame(
+            {
+                "open": close - 2,
+                "high": close + 2,
+                "low": close - 2,
+                "close": close,
+                "volume": volume,
+            },
+            index=idx,
+        )
         df.index.name = "time"
         return df
 
     def test_passes_on_new_high_with_volume(self):
-        s  = RSBreakoutStrategy()
+        s = RSBreakoutStrategy()
         df = self._build_breakout_df()
         result = s.scan("IREDA", df)
         assert result is not None
@@ -195,24 +205,30 @@ class TestRSBreakoutStrategy:
         assert result["volume_ratio"] >= 1.40
 
     def test_rejects_without_volume_surge(self):
-        s   = RSBreakoutStrategy()
-        df  = self._build_breakout_df()
+        s = RSBreakoutStrategy()
+        df = self._build_breakout_df()
         # Flatten volume — no surge
         df["volume"] = 1_000_000.0
         assert s.scan("X", df) is None
 
     def test_rejects_below_200sma(self):
-        s   = RSBreakoutStrategy()
-        n   = 260
+        s = RSBreakoutStrategy()
+        n = 260
         # Price drops below its own SMA200 at the end
-        close  = np.linspace(1500, 500, n)
+        close = np.linspace(1500, 500, n)
         volume = np.full(n, 1_000_000.0)
         volume[-1] = 2_000_000.0
         idx = pd.date_range("2022-01-03", periods=n, freq="B")
-        df  = pd.DataFrame({
-            "open": close - 2, "high": close + 2, "low": close - 2,
-            "close": close, "volume": volume,
-        }, index=idx)
+        df = pd.DataFrame(
+            {
+                "open": close - 2,
+                "high": close + 2,
+                "low": close - 2,
+                "close": close,
+                "volume": volume,
+            },
+            index=idx,
+        )
         df.index.name = "time"
         assert s.scan("X", df) is None
 
@@ -225,44 +241,48 @@ class TestRSBreakoutStrategy:
 # TightClosesStrategy
 # ---------------------------------------------------------------------------
 
+
 class TestTightClosesStrategy:
     def _build_tight_df(self, tight_bars: int = 5) -> pd.DataFrame:
         """
         Build an uptrending DF with *tight_bars* nearly-identical closes
         at the end (within 0.5 % of each other).
         """
-        n   = 200
+        n = 200
         rng = np.random.default_rng(2)
         # Rising trend then flat tight zone
-        trend  = np.linspace(500, 1400, n - tight_bars)
+        trend = np.linspace(500, 1400, n - tight_bars)
         anchor = float(trend[-1])
-        tight  = np.full(tight_bars, anchor) + rng.uniform(-2, 2, tight_bars)
-        close  = np.concatenate([trend, tight])
-        idx    = pd.date_range("2022-01-03", periods=n, freq="B")
+        tight = np.full(tight_bars, anchor) + rng.uniform(-2, 2, tight_bars)
+        close = np.concatenate([trend, tight])
+        idx = pd.date_range("2022-01-03", periods=n, freq="B")
         volume = np.full(n, 1_000_000.0)
         # Decreasing volume over tight zone
         volume[-tight_bars:] = np.linspace(800_000, 400_000, tight_bars)
-        df = pd.DataFrame({
-            "open":   close - 3,
-            "high":   close + 3,
-            "low":    close - 3,
-            "close":  close,
-            "volume": volume,
-        }, index=idx)
+        df = pd.DataFrame(
+            {
+                "open": close - 3,
+                "high": close + 3,
+                "low": close - 3,
+                "close": close,
+                "volume": volume,
+            },
+            index=idx,
+        )
         df.index.name = "time"
         return df
 
     def test_passes_with_tight_closes(self):
-        s      = TightClosesStrategy()
-        df     = self._build_tight_df(tight_bars=5)
+        s = TightClosesStrategy()
+        df = self._build_tight_df(tight_bars=5)
         result = s.scan("KPIL", df)
         assert result is not None
-        assert result["strategy"]   == "tight_closes"
+        assert result["strategy"] == "tight_closes"
         assert result["tight_bars"] >= 3
         assert result["tight_range_pct"] < 1.5
 
     def test_rejects_wide_range(self):
-        s  = TightClosesStrategy()
+        s = TightClosesStrategy()
         df = _make_daily(n=200, trend="up")
         # Random walk will rarely produce 3 tight closes in a row
         # We just verify it doesn't crash and returns dict-or-None
@@ -270,44 +290,54 @@ class TestTightClosesStrategy:
         assert result is None or isinstance(result, dict)
 
     def test_result_has_breakout_level(self):
-        s      = TightClosesStrategy()
-        df     = self._build_tight_df(tight_bars=5)
+        s = TightClosesStrategy()
+        df = self._build_tight_df(tight_bars=5)
         result = s.scan("KPIL", df)
         if result is not None:
-            assert "breakout_level"            in result
-            assert "distance_to_breakout_pct"  in result
-            assert result["breakout_level"]    > result["current_price"]
+            assert "breakout_level" in result
+            assert "distance_to_breakout_pct" in result
+            assert result["breakout_level"] > result["current_price"]
 
     def test_sort_key_tightest_first(self):
         s = TightClosesStrategy()
-        assert s.sort_key({"tight_range_pct": 0.3, "tight_bars": 5}) < \
-               s.sort_key({"tight_range_pct": 0.8, "tight_bars": 3})
+        assert s.sort_key({"tight_range_pct": 0.3, "tight_bars": 5}) < s.sort_key(
+            {"tight_range_pct": 0.8, "tight_bars": 3}
+        )
 
 
 # ---------------------------------------------------------------------------
 # _worker  (the process-pool entry point)
 # ---------------------------------------------------------------------------
 
+
 class TestWorkerFunction:
     def test_worker_returns_strategy_name_and_none_on_empty(self):
         from signals.scanner_engine import _worker
+
         name, result = _worker(VCPStrategy.fqname(), "X", [])
-        assert name   == "vcp"
+        assert name == "vcp"
         assert result is None
 
     def test_worker_returns_result_for_passing_symbol(self):
         from signals.scanner_engine import _worker
+
         # RS breakout with a clean breakout DF
-        n      = 260
-        rng    = np.random.default_rng(1)
-        close  = np.linspace(500, 1500, n) + rng.normal(0, 1, n)
+        n = 260
+        rng = np.random.default_rng(1)
+        close = np.linspace(500, 1500, n) + rng.normal(0, 1, n)
         volume = np.full(n, 1_000_000.0)
         volume[-1] = 2_500_000.0
-        idx    = pd.date_range("2022-01-03", periods=n, freq="B")
-        df     = pd.DataFrame({
-            "open": close - 1, "high": close + 1, "low": close - 1,
-            "close": close, "volume": volume,
-        }, index=idx)
+        idx = pd.date_range("2022-01-03", periods=n, freq="B")
+        df = pd.DataFrame(
+            {
+                "open": close - 1,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": volume,
+            },
+            index=idx,
+        )
         df.index.name = "time"
         records = df.reset_index().to_dict(orient="records")
 
@@ -321,20 +351,27 @@ class TestWorkerFunction:
 # ScannerEngine  (integration — patches DB, uses threads not processes)
 # ---------------------------------------------------------------------------
 
+
 class TestScannerEngine:
     def _make_records_for_engine(self, symbol: str) -> list[dict]:
         """Produce RS-breakout records for *symbol*."""
-        n      = 260
-        rng    = np.random.default_rng(hash(symbol) % 2**31)
-        close  = np.linspace(500, 1500, n) + rng.normal(0, 1, n)
+        n = 260
+        rng = np.random.default_rng(hash(symbol) % 2**31)
+        close = np.linspace(500, 1500, n) + rng.normal(0, 1, n)
         volume = np.full(n, 1_000_000.0)
         volume[-1] = 2_500_000.0
-        idx    = pd.date_range("2022-01-03", periods=n, freq="B")
-        df     = pd.DataFrame({
-            "symbol": symbol,
-            "open": close - 1, "high": close + 1, "low": close - 1,
-            "close": close, "volume": volume,
-        }, index=idx)
+        idx = pd.date_range("2022-01-03", periods=n, freq="B")
+        df = pd.DataFrame(
+            {
+                "symbol": symbol,
+                "open": close - 1,
+                "high": close + 1,
+                "low": close - 1,
+                "close": close,
+                "volume": volume,
+            },
+            index=idx,
+        )
         df.index.name = "time"
         return df.reset_index().to_dict(orient="records")
 
@@ -345,30 +382,39 @@ class TestScannerEngine:
 
     def test_returns_dict_keyed_by_strategy_name(self):
         from concurrent.futures import ThreadPoolExecutor
+
         from signals.scanner_engine import ScannerEngine
+
         strategies = [RSBreakoutStrategy(), TightClosesStrategy()]
         engine = ScannerEngine(strategies, workers=2)
 
-        with patch("signals.scanner_engine._fetch_group", side_effect=self._mock_fetch), \
-             patch("signals.scanner_engine.ProcessPoolExecutor", ThreadPoolExecutor):
+        with (
+            patch("signals.scanner_engine._fetch_group", side_effect=self._mock_fetch),
+            patch("signals.scanner_engine.ProcessPoolExecutor", ThreadPoolExecutor),
+        ):
             results = engine.run(["RELIANCE", "TCS", "INFY"])
 
         assert set(results.keys()) == {"rs_breakout", "tight_closes"}
 
     def test_all_results_are_lists(self):
         from concurrent.futures import ThreadPoolExecutor
+
         from signals.scanner_engine import ScannerEngine
+
         strategies = [RSBreakoutStrategy()]
         engine = ScannerEngine(strategies, workers=2)
 
-        with patch("signals.scanner_engine._fetch_group", side_effect=self._mock_fetch), \
-             patch("signals.scanner_engine.ProcessPoolExecutor", ThreadPoolExecutor):
+        with (
+            patch("signals.scanner_engine._fetch_group", side_effect=self._mock_fetch),
+            patch("signals.scanner_engine.ProcessPoolExecutor", ThreadPoolExecutor),
+        ):
             results = engine.run(["RELIANCE"])
 
         assert isinstance(results["rs_breakout"], list)
 
     def test_empty_universe_returns_empty_lists(self):
         from signals.scanner_engine import ScannerEngine
+
         strategies = [VCPStrategy()]
         engine = ScannerEngine(strategies)
 
@@ -379,18 +425,25 @@ class TestScannerEngine:
 
     def test_raises_with_no_strategies(self):
         from signals.scanner_engine import ScannerEngine
+
         with pytest.raises(ValueError, match="strategy"):
             ScannerEngine([])
 
     def test_strategies_share_single_fetch_when_same_interval(self):
         """3 daily strategies → only 1 DB fetch."""
-        from signals.scanner_engine import ScannerEngine
         from concurrent.futures import ThreadPoolExecutor
+
+        from signals.scanner_engine import ScannerEngine
+
         strategies = [VCPStrategy(), RSBreakoutStrategy(), TightClosesStrategy()]
         engine = ScannerEngine(strategies, workers=2)
 
-        with patch("signals.scanner_engine._fetch_group", side_effect=self._mock_fetch) as mock_fetch, \
-             patch("signals.scanner_engine.ProcessPoolExecutor", ThreadPoolExecutor):
+        with (
+            patch(
+                "signals.scanner_engine._fetch_group", side_effect=self._mock_fetch
+            ) as mock_fetch,
+            patch("signals.scanner_engine.ProcessPoolExecutor", ThreadPoolExecutor),
+        ):
             engine.run(["RELIANCE"])
 
         # All three strategies use interval='day', so only one query

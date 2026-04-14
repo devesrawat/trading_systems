@@ -12,6 +12,7 @@ Usage:
     # In scheduler — check every 5 min during market hours
     HealthMonitor().send_alert_if_stale()
 """
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -22,7 +23,7 @@ import structlog
 log = structlog.get_logger(__name__)
 
 _TZ_IST = ZoneInfo("Asia/Kolkata")
-_MARKET_OPEN = (9, 15)    # (hour, minute) IST
+_MARKET_OPEN = (9, 15)  # (hour, minute) IST
 _MARKET_CLOSE = (15, 30)
 _STALE_SECONDS = 15 * 60  # 15 minutes
 
@@ -39,6 +40,7 @@ class HealthMonitor:
         try:
             from data.redis_keys import RedisKeys
             from data.store import get_redis
+
             ts = datetime.utcnow().isoformat()
             get_redis().set(RedisKeys.SYSTEM_HEARTBEAT, ts, ex=3600)
         except Exception as exc:
@@ -91,6 +93,7 @@ class HealthMonitor:
         try:
             from data.redis_keys import RedisKeys
             from data.store import get_redis
+
             raw = get_redis().get(RedisKeys.SYSTEM_HEARTBEAT)
             if raw:
                 return datetime.fromisoformat(raw if isinstance(raw, str) else raw.decode())
@@ -101,6 +104,7 @@ class HealthMonitor:
     def _alert(self, message: str) -> None:
         try:
             from monitoring.alerts import TelegramAlerter
+
             TelegramAlerter().send(message)
         except Exception:
             pass

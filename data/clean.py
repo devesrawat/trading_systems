@@ -8,6 +8,7 @@ Covers:
   - OHLCV sanity validation
   - NSE circuit-limit day flagging
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -21,12 +22,13 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger(__name__)
 
-NSE_CIRCUIT_THRESHOLD = 0.199   # 19.9% — NSE individual stock circuit limit
+NSE_CIRCUIT_THRESHOLD = 0.199  # 19.9% — NSE individual stock circuit limit
 
 
 # ---------------------------------------------------------------------------
 # Outlier removal
 # ---------------------------------------------------------------------------
+
 
 def remove_outliers(
     df: pd.DataFrame,
@@ -71,7 +73,8 @@ def remove_outliers(
 # Corporate action adjustments
 # ---------------------------------------------------------------------------
 
-def adjust_splits(df: pd.DataFrame, token: int, kite: "KiteConnect") -> pd.DataFrame:
+
+def adjust_splits(df: pd.DataFrame, token: int, kite: KiteConnect) -> pd.DataFrame:
     """
     Back-adjust OHLCV for stock splits using Kite corporate action data.
 
@@ -86,8 +89,7 @@ def adjust_splits(df: pd.DataFrame, token: int, kite: "KiteConnect") -> pd.DataF
         return df
 
     splits = [
-        ca for ca in (corporate_actions or [])
-        if ca.get("type", "").lower() in ("split", "bonus")
+        ca for ca in (corporate_actions or []) if ca.get("type", "").lower() in ("split", "bonus")
     ]
     if not splits:
         return df
@@ -97,7 +99,7 @@ def adjust_splits(df: pd.DataFrame, token: int, kite: "KiteConnect") -> pd.DataF
 
     for split in sorted(splits, key=lambda x: x["ex_date"], reverse=True):
         ex_date = pd.Timestamp(split["ex_date"])
-        ratio: float = float(split.get("ratio", 1.0))   # e.g. 2.0 for 2-for-1 split
+        ratio: float = float(split.get("ratio", 1.0))  # e.g. 2.0 for 2-for-1 split
 
         if ratio <= 0 or ratio == 1.0:
             continue
@@ -106,7 +108,9 @@ def adjust_splits(df: pd.DataFrame, token: int, kite: "KiteConnect") -> pd.DataF
         price_cols = [c for c in ["open", "high", "low", "close"] if c in result.columns]
         result.loc[pre_mask, price_cols] = result.loc[pre_mask, price_cols] / ratio
         if "volume" in result.columns:
-            result.loc[pre_mask, "volume"] = (result.loc[pre_mask, "volume"] * ratio).astype("int64")
+            result.loc[pre_mask, "volume"] = (result.loc[pre_mask, "volume"] * ratio).astype(
+                "int64"
+            )
 
         log.info("split_adjusted", token=token, ex_date=ex_date, ratio=ratio)
 
@@ -116,6 +120,7 @@ def adjust_splits(df: pd.DataFrame, token: int, kite: "KiteConnect") -> pd.DataF
 # ---------------------------------------------------------------------------
 # Missing bar handling
 # ---------------------------------------------------------------------------
+
 
 def fill_missing_bars(df: pd.DataFrame, interval: str) -> pd.DataFrame:
     """
@@ -175,6 +180,7 @@ def fill_missing_bars(df: pd.DataFrame, interval: str) -> pd.DataFrame:
 # Validation
 # ---------------------------------------------------------------------------
 
+
 def validate_ohlcv(df: pd.DataFrame) -> tuple[bool, list[str]]:
     """
     Sanity-check an OHLCV DataFrame.
@@ -223,6 +229,7 @@ def validate_ohlcv(df: pd.DataFrame) -> tuple[bool, list[str]]:
 # ---------------------------------------------------------------------------
 # Canonical preparation pipeline  (single source of truth)
 # ---------------------------------------------------------------------------
+
 
 def prepare_ohlcv(
     df: pd.DataFrame,
@@ -279,6 +286,7 @@ def prepare_ohlcv(
 # ---------------------------------------------------------------------------
 # NSE circuit limit flagging
 # ---------------------------------------------------------------------------
+
 
 def flag_circuit_limit_days(df: pd.DataFrame) -> pd.DataFrame:
     """

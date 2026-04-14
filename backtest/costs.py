@@ -12,11 +12,11 @@ Breakdown per trade (Zerodha, NSE equity):
   GST          = 18% on (brokerage + exchange fee)
   Stamp duty   = 0.015% on buy-side only
 """
+
 from __future__ import annotations
 
 
 class NSECostModel:
-
     # ------------------------------------------------------------------
     # equity_cost
     # ------------------------------------------------------------------

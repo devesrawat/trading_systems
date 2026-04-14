@@ -8,32 +8,34 @@ Design constraints:
   - DB writes are batched (BATCH_SIZE rows) to minimise round-trips
   - Symbols already up-to-date in DB are skipped (resume-safe)
 """
+
 from __future__ import annotations
 
 from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import date, timedelta
-from typing import Any
 
 import pandas as pd
 import structlog
+from sqlalchemy import text
 
 from config.settings import settings
 from data.clean import prepare_ohlcv
 from data.ingest import KiteIngestor
 from data.rate_limiter import RateLimiter
-from data.store import _OHLCV_COLS, get_ohlcv, write_ohlcv_records
+from data.store import _OHLCV_COLS, get_engine, write_ohlcv_records
 
 log = structlog.get_logger(__name__)
 
-_KITE_RPS    = settings.kite_rps
-_BATCH_SIZE  = settings.bulk_ingest_batch_size
+_KITE_RPS = settings.kite_rps
+_BATCH_SIZE = settings.bulk_ingest_batch_size
 _MAX_WORKERS = settings.bulk_ingest_max_workers
-_DB_WORKERS  = settings.bulk_ingest_db_workers
+_DB_WORKERS = settings.bulk_ingest_db_workers
 
 
 # ---------------------------------------------------------------------------
 # DB helpers
 # ---------------------------------------------------------------------------
+
 
 def _latest_date_in_db(token: int, interval: str) -> date | None:
     """Return the most recent bar date for this token+interval, or None."""
@@ -50,6 +52,7 @@ def _latest_date_in_db(token: int, interval: str) -> date | None:
 # Per-symbol fetch + clean
 # ---------------------------------------------------------------------------
 
+
 def _fetch_one(
     ingestor: KiteIngestor,
     limiter: RateLimiter,
@@ -64,7 +67,7 @@ def _fetch_one(
     Returns (symbol, row_count, rows_for_db).
     Skips symbols whose DB is already current to today.
     """
-    token  = instrument["instrument_token"]
+    token = instrument["instrument_token"]
     symbol = instrument["tradingsymbol"]
 
     # Skip if already up to date
@@ -74,9 +77,7 @@ def _fetch_one(
         return symbol, 0, []
 
     # Advance from_date if partial data exists
-    effective_from = (
-        latest + timedelta(days=1) if latest else from_date
-    )
+    effective_from = latest + timedelta(days=1) if latest else from_date
 
     with limiter:
         try:
@@ -95,8 +96,8 @@ def _fetch_one(
 
     df = pd.DataFrame(raw)
     df.rename(columns={"date": "time"}, inplace=True)
-    df["token"]    = token
-    df["symbol"]   = symbol
+    df["token"] = token
+    df["symbol"] = symbol
     df["interval"] = interval
 
     df = prepare_ohlcv(df, interval=interval)
@@ -115,6 +116,7 @@ def _fetch_one(
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def bulk_ingest(
     ingestor: KiteIngestor,
@@ -141,11 +143,11 @@ def bulk_ingest(
     -------
     dict mapping symbol → rows written (0 = skipped or error)
     """
-    limiter      = RateLimiter(_KITE_RPS)
+    limiter = RateLimiter(_KITE_RPS)
     results: dict[str, int] = {}
     pending_rows: list[dict] = []
     total_written = 0
-    total         = len(instruments)
+    total = len(instruments)
     flush_futures: list[Future] = []
 
     log.info(
@@ -160,9 +162,10 @@ def bulk_ingest(
 
     # Two thread pools: one for API fetches, one for DB writes.
     # DB writes overlap with ongoing API fetches instead of blocking them.
-    with ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="kite") as fetch_pool, \
-         ThreadPoolExecutor(max_workers=_DB_WORKERS,  thread_name_prefix="db")   as db_pool:
-
+    with (
+        ThreadPoolExecutor(max_workers=_MAX_WORKERS, thread_name_prefix="kite") as fetch_pool,
+        ThreadPoolExecutor(max_workers=_DB_WORKERS, thread_name_prefix="db") as db_pool,
+    ):
         fetch_futures = {
             fetch_pool.submit(
                 _fetch_one, ingestor, limiter, inst, from_date, to_date, interval
@@ -170,12 +173,10 @@ def bulk_ingest(
             for inst in instruments
         }
 
-        done = 0
-        for future in as_completed(fetch_futures):
+        for done, future in enumerate(as_completed(fetch_futures), 1):
             symbol, count, rows = future.result()
             results[symbol] = count
             pending_rows.extend(rows)
-            done += 1
 
             # Dispatch a non-blocking flush when batch is full
             if len(pending_rows) >= _BATCH_SIZE:

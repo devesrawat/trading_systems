@@ -1,6 +1,7 @@
 """Unit tests for data/ingest.py — mocks KiteConnect, no live API calls."""
+
 from datetime import date, datetime
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pandas as pd
 import pytest
@@ -8,10 +9,10 @@ import pytest
 from data.ingest import VALID_INTERVALS, KiteIngestor
 from data.providers.base import OHLCVProvider
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def mock_kite_cls():
@@ -31,6 +32,7 @@ def ingestor(mock_kite_cls):
 # ---------------------------------------------------------------------------
 # _date_chunks
 # ---------------------------------------------------------------------------
+
 
 class TestDateChunks:
     def test_day_interval_single_chunk(self):
@@ -67,6 +69,7 @@ class TestDateChunks:
 # fetch_historical
 # ---------------------------------------------------------------------------
 
+
 class TestFetchHistorical:
     def test_invalid_interval_raises(self, ingestor):
         with pytest.raises(ValueError, match="Invalid interval"):
@@ -88,10 +91,26 @@ class TestFetchHistorical:
     def test_writes_to_db_on_success(self, mock_write, ingestor, mock_kite_cls):
         _, kite_instance = mock_kite_cls
         kite_instance.historical_data.return_value = [
-            {"date": datetime(2024, 1, 2), "open": 100.0, "high": 105.0, "low": 99.0, "close": 103.0, "volume": 1_000_000},
-            {"date": datetime(2024, 1, 3), "open": 103.0, "high": 107.0, "low": 102.0, "close": 106.0, "volume": 1_200_000},
+            {
+                "date": datetime(2024, 1, 2),
+                "open": 100.0,
+                "high": 105.0,
+                "low": 99.0,
+                "close": 103.0,
+                "volume": 1_000_000,
+            },
+            {
+                "date": datetime(2024, 1, 3),
+                "open": 103.0,
+                "high": 107.0,
+                "low": 102.0,
+                "close": 106.0,
+                "volume": 1_200_000,
+            },
         ]
-        ingestor.fetch_historical(256265, date(2024, 1, 1), date(2024, 1, 10), "day", symbol="RELIANCE")
+        ingestor.fetch_historical(
+            256265, date(2024, 1, 1), date(2024, 1, 10), "day", symbol="RELIANCE"
+        )
         mock_write.assert_called_once()
         written_df = mock_write.call_args[0][0]
         assert len(written_df) == 2
@@ -102,7 +121,14 @@ class TestFetchHistorical:
     def test_deduplicates_overlapping_chunks(self, mock_write, ingestor, mock_kite_cls):
         _, kite_instance = mock_kite_cls
         # Return the same bar twice (simulating overlap)
-        row = {"date": datetime(2024, 1, 2), "open": 100.0, "high": 105.0, "low": 99.0, "close": 103.0, "volume": 1_000_000}
+        row = {
+            "date": datetime(2024, 1, 2),
+            "open": 100.0,
+            "high": 105.0,
+            "low": 99.0,
+            "close": 103.0,
+            "volume": 1_000_000,
+        }
         kite_instance.historical_data.return_value = [row]
         result = ingestor.fetch_historical(256265, date(2024, 1, 1), date(2024, 1, 10), "day")
         assert not result.index.duplicated().any()
@@ -111,6 +137,7 @@ class TestFetchHistorical:
 # ---------------------------------------------------------------------------
 # refresh_access_token
 # ---------------------------------------------------------------------------
+
 
 class TestRefreshAccessToken:
     @patch("data.ingest.get_redis")

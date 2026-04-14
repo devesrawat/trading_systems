@@ -1,33 +1,39 @@
 """Unit tests for llm/pipeline.py — mocks scorer, sources, and DB."""
-import time
-from datetime import date
-from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
+import time
+from unittest.mock import MagicMock, patch
 
 from llm.pipeline import SentimentPipeline
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 def _make_pipeline(mock_scorer=None, mock_fetcher=None) -> SentimentPipeline:
     scorer = mock_scorer or MagicMock()
     scorer.score_aggregate_cached.return_value = 0.5
     fetcher = mock_fetcher or MagicMock()
     fetcher.fetch_news.return_value = [
-        {"headline": "Test headline", "url": "https://example.com/1",
-         "datetime": time.time(), "source": "test", "summary": ""},
+        {
+            "headline": "Test headline",
+            "url": "https://example.com/1",
+            "datetime": time.time(),
+            "source": "test",
+            "summary": "",
+        },
     ]
-    with patch("llm.pipeline.FinnhubFetcher", return_value=fetcher), \
-         patch("llm.pipeline.FinBERTScorer", return_value=scorer):
+    with (
+        patch("llm.pipeline.FinnhubFetcher", return_value=fetcher),
+        patch("llm.pipeline.FinBERTScorer", return_value=scorer),
+    ):
         return SentimentPipeline()
 
 
 # ---------------------------------------------------------------------------
 # run_daily
 # ---------------------------------------------------------------------------
+
 
 class TestRunDaily:
     def test_returns_dict_keyed_by_symbol(self):
@@ -90,6 +96,7 @@ class TestRunDaily:
 # get_latest_score
 # ---------------------------------------------------------------------------
 
+
 class TestGetLatestScore:
     @patch("llm.pipeline.get_redis")
     def test_returns_cached_score(self, mock_get_redis):
@@ -128,12 +135,16 @@ class TestGetLatestScore:
 # _write_scores (DB schema contract)
 # ---------------------------------------------------------------------------
 
+
 class TestWriteScores:
     def test_write_scores_calls_db_with_correct_columns(self):
         from llm.pipeline import _write_scores
+
         with patch("llm.pipeline.get_engine") as mock_engine:
             mock_conn = MagicMock()
-            mock_engine.return_value.connect.return_value.__enter__ = MagicMock(return_value=mock_conn)
+            mock_engine.return_value.connect.return_value.__enter__ = MagicMock(
+                return_value=mock_conn
+            )
             mock_engine.return_value.connect.return_value.__exit__ = MagicMock(return_value=False)
             _write_scores({"RELIANCE": 0.5, "TCS": -0.2})
             mock_conn.execute.assert_called_once()

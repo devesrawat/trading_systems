@@ -17,6 +17,7 @@ Entry
 Buy on a decisive range expansion day (close outside the tight range + volume surge).
 This scanner flags the tight zone; the breakout is confirmed in real time via LiveFeed.
 """
+
 from __future__ import annotations
 
 from typing import Any
@@ -28,19 +29,19 @@ from signals.base_strategy import BaseStrategy
 
 
 class TightClosesStrategy(BaseStrategy):
-    name: str          = "tight_closes"
+    name: str = "tight_closes"
     lookback_days: int = 200
-    interval: str      = "day"
-    min_bars: int      = 60
+    interval: str = "day"
+    min_bars: int = 60
 
-    tight_range_pct: float = 1.5    # max % spread across the tight closes
-    min_tight_bars: int    = 3      # minimum number of consecutive tight bars
+    tight_range_pct: float = 1.5  # max % spread across the tight closes
+    min_tight_bars: int = 3  # minimum number of consecutive tight bars
 
     def scan(self, symbol: str, df: pd.DataFrame) -> dict[str, Any] | None:
-        close    = df["close"]
-        volume   = df["volume"]
-        sma50    = close.rolling(50).mean()
-        high52   = close.rolling(252).max().iloc[-1]
+        close = df["close"]
+        volume = df["volume"]
+        sma50 = close.rolling(50).mean()
+        high52 = close.rolling(252).max().iloc[-1]
 
         cur = close.iloc[-1]
 
@@ -59,23 +60,25 @@ class TightClosesStrategy(BaseStrategy):
 
         # Tight range — pct spread from min to max close within streak
         streak_closes = close.iloc[streak_start : streak_start + streak_len]
-        tight_range   = float((streak_closes.max() - streak_closes.min()) / streak_closes.mean() * 100)
+        tight_range = float(
+            (streak_closes.max() - streak_closes.min()) / streak_closes.mean() * 100
+        )
         if tight_range > self.tight_range_pct:
             return None
 
         # Volume should be contracting over the streak
         streak_vols = volume.iloc[streak_start : streak_start + streak_len]
-        vol_trend   = self._volume_contracting(streak_vols)
+        vol_trend = self._volume_contracting(streak_vols)
 
         # Breakout level = top of the tight range + 0.5 %
         breakout_level = round(float(streak_closes.max()) * 1.005, 2)
 
         return {
-            "symbol":          symbol,
-            "strategy":        self.name,
-            "current_price":   cur,
-            "breakout_level":  breakout_level,
-            "tight_bars":      streak_len,
+            "symbol": symbol,
+            "strategy": self.name,
+            "current_price": cur,
+            "breakout_level": breakout_level,
+            "tight_bars": streak_len,
             "tight_range_pct": round(tight_range, 3),
             "volume_contracting": vol_trend,
             "distance_to_breakout_pct": round((breakout_level - cur) / cur * 100, 2),
@@ -96,8 +99,8 @@ class TightClosesStrategy(BaseStrategy):
         Returns (streak_length, start_index_in_series).
         """
         closes = close.values
-        n      = len(closes)
-        best_len   = 0
+        n = len(closes)
+        best_len = 0
         best_start = n - 1
 
         for end in range(n - 1, -1, -1):
@@ -111,9 +114,9 @@ class TightClosesStrategy(BaseStrategy):
                     break
                 streak = end - start + 1
                 if streak > best_len:
-                    best_len   = streak
+                    best_len = streak
                     best_start = start
-            break   # only check the most recent endpoint
+            break  # only check the most recent endpoint
 
         return best_len, best_start
 

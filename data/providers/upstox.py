@@ -10,7 +10,7 @@ Upstox API v2 reference: https://upstox.com/developer/api-documentation/
 Auth flow (once per trading day)::
 
     provider = UpstoxProvider(api_key="...", access_token="")
-    print(provider.get_login_url())   # open URL in browser, log in
+    print(provider.get_login_url())  # open URL in browser, log in
     code = input("Paste 'code' param from redirect URL: ")
     token = provider.refresh_access_token(code)
     # Persist token to UPSTOX_ACCESS_TOKEN env var
@@ -33,6 +33,7 @@ Live streaming notes::
     ``on_tick`` and ticks are not written to Redis — useful for debugging but
     not for production.  Historical data and quotes work with zero extra deps.
 """
+
 from __future__ import annotations
 
 import json
@@ -82,11 +83,13 @@ class UpstoxProvider(OHLCVProvider):
     Basic usage::
 
         provider = UpstoxProvider(api_key="...", access_token="<daily token>")
-        provider.register_instruments({
-            "RELIANCE": "NSE_EQ|INE002A01018",
-            "INFY":     "NSE_EQ|INE009A01021",
-        })
-        df = provider.fetch_historical("RELIANCE", date(2024,1,1), date.today(), "day")
+        provider.register_instruments(
+            {
+                "RELIANCE": "NSE_EQ|INE002A01018",
+                "INFY": "NSE_EQ|INE009A01021",
+            }
+        )
+        df = provider.fetch_historical("RELIANCE", date(2024, 1, 1), date.today(), "day")
     """
 
     def __init__(
@@ -275,11 +278,7 @@ class UpstoxProvider(OHLCVProvider):
 
         # Build symbol-keyed result
         key_to_symbol = {v: k for k, v in self._symbol_to_key.items() if k in symbols}
-        return {
-            key_to_symbol[key]: quote
-            for key, quote in raw.items()
-            if key in key_to_symbol
-        }
+        return {key_to_symbol[key]: quote for key, quote in raw.items() if key in key_to_symbol}
 
     # ------------------------------------------------------------------ #
     # Auth helpers                                                         #
@@ -336,6 +335,7 @@ class UpstoxProvider(OHLCVProvider):
 # ------------------------------------------------------------------ #
 # Module-level helpers                                                #
 # ------------------------------------------------------------------ #
+
 
 def _to_date_str(d: date | datetime) -> str:
     return (d.date() if isinstance(d, datetime) else d).isoformat()

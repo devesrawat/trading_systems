@@ -7,6 +7,7 @@ Rules (non-negotiable):
   - Minimum 5 folds before trusting aggregate metrics
   - Train window: rolling 24 months (not expanding)
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -150,6 +151,7 @@ class WalkForwardTrainer:
         """
         try:
             from monitoring.drift_detector import ConceptDriftDetector
+
             ConceptDriftDetector().fit(df, features)
             log.info("drift_reference_saved_after_training")
         except Exception as exc:
@@ -174,8 +176,8 @@ class WalkForwardTrainer:
         for r in self._fold_results:
             print(
                 f"{r.fold_index:>4}  "
-                f"{str(r.train_start.date()):>12}  "
-                f"{str(r.test_start.date()):>12}  "
+                f"{r.train_start.date()!s:>12}  "
+                f"{r.test_start.date()!s:>12}  "
                 f"{r.auc:>6.4f}  "
                 f"{r.precision:>6.4f}  "
                 f"{r.recall:>6.4f}  "
@@ -194,9 +196,7 @@ class WalkForwardTrainer:
     # Fold generation
     # ------------------------------------------------------------------
 
-    def _generate_folds(
-        self, df: pd.DataFrame
-    ) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
+    def _generate_folds(self, df: pd.DataFrame) -> list[tuple[pd.DataFrame, pd.DataFrame]]:
         """
         Split *df* into (train, test) pairs using a rolling window.
 
@@ -276,14 +276,16 @@ class WalkForwardTrainer:
 
         run_id = ""
         with mlflow.start_run(run_name=f"fold_{fold_index}", nested=True):
-            mlflow.log_params({
-                "fold": fold_index,
-                "train_start": str(train_df.index.min().date()),
-                "train_end": str(train_df.index.max().date()),
-                "test_start": str(test_df.index.min().date()),
-                "n_train": len(train_df),
-                "n_test": len(test_df),
-            })
+            mlflow.log_params(
+                {
+                    "fold": fold_index,
+                    "train_start": str(train_df.index.min().date()),
+                    "train_end": str(train_df.index.max().date()),
+                    "test_start": str(test_df.index.min().date()),
+                    "n_train": len(train_df),
+                    "n_test": len(test_df),
+                }
+            )
             mlflow.log_metrics({"auc": auc, "precision": precision, "recall": recall})
             run_id = mlflow.active_run().info.run_id if mlflow.active_run() else ""
 

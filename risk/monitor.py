@@ -4,6 +4,7 @@ Real-time portfolio P&L and drawdown tracker.
 State stored in Redis — survives process restarts and is available
 to all modules (circuit breaker, Prometheus exporter, Telegram alerts).
 """
+
 from __future__ import annotations
 
 import json
@@ -104,16 +105,17 @@ class PortfolioMonitor:
 
         daily_dd = (
             (self._daily_start_capital - capital) / self._daily_start_capital
-            if self._daily_start_capital > 0 else 0.0
+            if self._daily_start_capital > 0
+            else 0.0
         )
         weekly_dd = (
             (self._weekly_start_capital - capital) / self._weekly_start_capital
-            if self._weekly_start_capital > 0 else 0.0
+            if self._weekly_start_capital > 0
+            else 0.0
         )
         self._peak_capital = max(self._peak_capital, capital)
         max_dd = (
-            (self._peak_capital - capital) / self._peak_capital
-            if self._peak_capital > 0 else 0.0
+            (self._peak_capital - capital) / self._peak_capital if self._peak_capital > 0 else 0.0
         )
         current_dd = max(0.0, daily_dd)
 
@@ -137,8 +139,7 @@ class PortfolioMonitor:
             return {"gross_exposure": 0.0, "net_exposure": 0.0, "largest_position_pct": 0.0}
 
         position_values = {
-            sym: pos["qty"] * pos["current_price"]
-            for sym, pos in self._positions.items()
+            sym: pos["qty"] * pos["current_price"] for sym, pos in self._positions.items()
         }
         gross = sum(abs(v) for v in position_values.values())
         net = sum(position_values.values())
@@ -183,7 +184,8 @@ class PortfolioMonitor:
             cost = pos["avg_price"] * pos["qty"]
             pnl_pct = (
                 (pos["current_price"] - pos["avg_price"]) / pos["avg_price"]
-                if pos["avg_price"] > 0 else 0.0
+                if pos["avg_price"] > 0
+                else 0.0
             )
             result[sym] = {
                 "qty": pos["qty"],
@@ -205,19 +207,19 @@ class PortfolioMonitor:
         exp = self.get_exposure()
 
         lines = [
-            f"# HELP trading_unrealized_pnl_inr Unrealized P&L in INR",
+            "# HELP trading_unrealized_pnl_inr Unrealized P&L in INR",
             f"trading_unrealized_pnl_inr {pnl['unrealized']}",
-            f"# HELP trading_realized_pnl_inr Realized P&L in INR",
+            "# HELP trading_realized_pnl_inr Realized P&L in INR",
             f"trading_realized_pnl_inr {pnl['realized']}",
-            f"# HELP trading_daily_drawdown_pct Daily drawdown fraction",
+            "# HELP trading_daily_drawdown_pct Daily drawdown fraction",
             f"trading_daily_drawdown_pct {dd['daily_dd']}",
-            f"# HELP trading_weekly_drawdown_pct Weekly drawdown fraction",
+            "# HELP trading_weekly_drawdown_pct Weekly drawdown fraction",
             f"trading_weekly_drawdown_pct {dd['weekly_dd']}",
-            f"# HELP trading_max_drawdown_pct Max drawdown from peak",
+            "# HELP trading_max_drawdown_pct Max drawdown from peak",
             f"trading_max_drawdown_pct {dd['max_dd']}",
-            f"# HELP trading_open_positions Number of open positions",
+            "# HELP trading_open_positions Number of open positions",
             f"trading_open_positions {len(self._positions)}",
-            f"# HELP trading_gross_exposure_inr Gross exposure in INR",
+            "# HELP trading_gross_exposure_inr Gross exposure in INR",
             f"trading_gross_exposure_inr {exp['gross_exposure']}",
         ]
         return "\n".join(lines)
@@ -244,8 +246,12 @@ class PortfolioMonitor:
         try:
             state = json.loads(raw["data"])
             self._current_capital = float(state.get("current_capital", self._initial_capital))
-            self._daily_start_capital = float(state.get("daily_start_capital", self._initial_capital))
-            self._weekly_start_capital = float(state.get("weekly_start_capital", self._initial_capital))
+            self._daily_start_capital = float(
+                state.get("daily_start_capital", self._initial_capital)
+            )
+            self._weekly_start_capital = float(
+                state.get("weekly_start_capital", self._initial_capital)
+            )
             self._peak_capital = float(state.get("peak_capital", self._initial_capital))
             self._realized_pnl = float(state.get("realized_pnl", 0.0))
             self._positions = state.get("positions", {})
