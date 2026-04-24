@@ -114,3 +114,30 @@ def test_bar_aggregator_no_callbacks_on_intra_bar():
 
     # No bar closed yet
     assert callback_count == 0
+
+
+def test_vcp_pivot_tracking_no_scan():
+    """Verify pivot tracking uses set, not KEYS scan."""
+    from data.live_feed import LiveFeed
+    from data.redis_keys import RedisKeys
+    from data.store import get_redis
+
+    feed = LiveFeed("test_key", "test_token")
+    candidates = [
+        {"symbol": "RELIANCE", "pivot_buy": 2895.0, "avg_vol_50d": 1_000_000},
+        {"symbol": "INFY", "pivot_buy": 2200.0, "avg_vol_50d": 500_000},
+    ]
+
+    r = get_redis()
+    r.flushdb()  # Clean slate
+
+    # Call store_vcp_pivots
+    feed.store_vcp_pivots(candidates)
+
+    # Verify set was populated
+    symbols_in_set = r.smembers(RedisKeys.CURRENT_VCP_SYMBOLS)
+    assert symbols_in_set == {"RELIANCE", "INFY"}
+
+    # Verify pivots exist
+    reliance_pivot = r.get(f"vcp:pivot:RELIANCE")
+    assert reliance_pivot is not None
