@@ -43,15 +43,69 @@ from monitoring.health import HealthMonitor
 from risk.breakers import CircuitBreaker
 from risk.monitor import PortfolioMonitor
 from risk.sizer import PositionSizer
+from signals.contracts import Signal
 from signals.features import FEATURE_COLUMNS, build_features
 from signals.model import ModelRegistry, SignalModel
-from signals.vcp_scanner import scan_vcp_universe
+from signals.registry import StrategyRegistry
+from signals.scanner_engine import ScannerEngine
+from signals.signal_router import normalize_strategy_result
 
 log = structlog.get_logger(__name__)
 
 _TOP_N_EQUITY = 50
 _TOP_N_CRYPTO = 20
 _MIN_RETRAIN_WIN_RATE = 0.50
+
+
+# ---------------------------------------------------------------------------
+# Mode gating
+# ---------------------------------------------------------------------------
+
+
+def _mode_gate(
+    signal_mode: str,
+    paper_trade_mode: bool,
+    circuit_breaker_halted: bool,
+) -> tuple[bool, str | None]:
+    """
+    Determine if a signal should be executed based on mode and system state.
+
+    Parameters
+    ----------
+    signal_mode : str
+        Signal mode (research, watchlist, paper, live)
+    paper_trade_mode : bool
+        Whether the system is in paper trading mode
+    circuit_breaker_halted : bool
+        Whether the circuit breaker is halted
+
+    Returns
+    -------
+    tuple[bool, str | None]
+        (allowed, reason_rejected) where reason_rejected is None if allowed,
+        or a string explaining why the signal was rejected
+    """
+    if signal_mode == "research":
+        return False, "research mode signals not executed"
+
+    if signal_mode == "watchlist":
+        return False, "watchlist mode signals not executed"
+
+    if signal_mode == "paper":
+        if not paper_trade_mode:
+            return False, "paper mode signal attempted in live trading"
+        if circuit_breaker_halted:
+            return False, "circuit breaker halted"
+        return True, None
+
+    if signal_mode == "live":
+        if paper_trade_mode:
+            return False, "live mode signal attempted in paper trading"
+        if circuit_breaker_halted:
+            return False, "circuit breaker halted"
+        return True, None
+
+    return False, f"unknown signal mode: {signal_mode}"
 
 
 class TradingSystem:
@@ -177,13 +231,57 @@ class TradingSystem:
         if self._market_type in ("crypto", "both"):
             self._load_crypto_universe()
 
-        # 3. Run VCP scan across equity universe (CPU-bound; results cached for the session)
+        # 3. Run enabled strategies against equity universe using ScannerEngine
         if self._market_type in ("equity", "both") and self._equity_universe:
             try:
-                self._vcp_candidates = scan_vcp_universe(self._equity_universe)
-                log.info("vcp_scan_complete", candidates=len(self._vcp_candidates))
+                registry = StrategyRegistry()
+                enabled = registry.group_by_interval_asset_class()
+
+                # Collect all strategies for all intervals
+                all_strategies = []
+                for (_asset_class, _interval), strategies in enabled.items():
+                    all_strategies.extend(strategies)
+
+                if all_strategies:
+                    engine = ScannerEngine(strategies=all_strategies)
+                    raw_results = engine.run(self._equity_universe)
+
+                    # Normalize all strategy results to Signal objects
+                    for strategy_name, result_list in raw_results.items():
+                        for result_dict in result_list:
+                            try:
+                                signal = normalize_strategy_result(
+                                    strategy_result=result_dict,
+                                    symbol=result_dict.get("symbol", ""),
+                                    strategy_name=strategy_name,
+                                    confidence=result_dict.get("confidence", 0.5),
+                                    mode="research",  # Strategy scanner hits are research-mode by default
+                                )
+                                # Store as raw dicts for backward compatibility (to be phased out)
+                                self._vcp_candidates.append(result_dict)
+                                log.info(
+                                    "strategy_signal_generated",
+                                    signal_id=signal.signal_id,
+                                    symbol=signal.symbol,
+                                    strategy=strategy_name,
+                                    confidence=signal.confidence,
+                                )
+                            except Exception as e:
+                                log.warning(
+                                    "strategy_result_normalization_failed",
+                                    strategy=strategy_name,
+                                    error=str(e),
+                                )
+                    log.info(
+                        "strategies_scan_complete",
+                        strategies=len(all_strategies),
+                        results={k: len(v) for k, v in raw_results.items()},
+                    )
+                else:
+                    log.warning("no_enabled_strategies_found")
+                    self._vcp_candidates = []
             except Exception as exc:
-                log.error("vcp_scan_failed", error=str(exc))
+                log.error("strategies_scan_failed", error=str(exc))
                 self._vcp_candidates = []
 
         # 4. Run sentiment for equity universe
@@ -561,10 +659,70 @@ class TradingSystem:
 
     def _execute_signal(
         self,
+        signal_or_symbol: str | Signal,
+        feature_df: pd.DataFrame | None = None,
+        asset_class: str = "equity",
+    ) -> None:
+        """
+        Execute a signal with mode gating.
+
+        Supports both old interface (symbol, feature_df) and new (Signal).
+        """
+        # Handle both old and new interfaces
+        if isinstance(signal_or_symbol, Signal):
+            signal = signal_or_symbol
+            symbol = signal.symbol
+        else:
+            # Legacy interface: (symbol, feature_df) tuple
+            symbol = signal_or_symbol
+            signal = None
+
+        try:
+            # Mode gating: reject research/watchlist, check paper/live conditions
+            if signal:
+                allowed, reason_rejected = _mode_gate(
+                    signal_mode=signal.mode,
+                    paper_trade_mode=settings.paper_trade_mode,
+                    circuit_breaker_halted=self._circuit_breaker.is_halted(),
+                )
+
+                log.info(
+                    "signal_mode_check",
+                    signal_id=signal.signal_id,
+                    symbol=signal.symbol,
+                    strategy=signal.strategy_name,
+                    mode=signal.mode,
+                    allowed=allowed,
+                    reason=reason_rejected,
+                )
+
+                if not allowed:
+                    # Log rejected signal but don't execute
+                    self._logger.log_signal(
+                        symbol=symbol,
+                        features_dict=signal.features,
+                        signal_prob=signal.confidence,
+                        action_taken="REJECTED",
+                    )
+                    return
+
+            # For legacy interface (feature_df provided), run XGBoost model
+            if feature_df is not None:
+                self._execute_legacy_signal(symbol, feature_df, asset_class)
+            elif signal:
+                # Signal-based execution: use signal's confidence and entry specs
+                self._execute_signal_based(signal, asset_class)
+
+        except Exception as exc:
+            log.error("signal_execution_error", symbol=symbol, error=str(exc))
+
+    def _execute_legacy_signal(
+        self,
         symbol: str,
         feature_df: pd.DataFrame,
         asset_class: str = "equity",
     ) -> None:
+        """Legacy XGBoost-based execution (for backward compatibility)."""
         try:
             sentiment_score = self._sentiment.get_latest_score(symbol) if self._sentiment else 0.0  # noqa: F841 — logged in signal metadata (future)
             last_row = feature_df.iloc[[-1]]
@@ -663,7 +821,82 @@ class TradingSystem:
                 pass
 
         except Exception as exc:
-            log.error("signal_execution_error", symbol=symbol, error=str(exc))
+            log.error("legacy_signal_execution_error", symbol=symbol, error=str(exc))
+
+    def _execute_signal_based(
+        self,
+        signal: Signal,
+        asset_class: str = "equity",
+    ) -> None:
+        """Execute a Signal object with unified contract."""
+        try:
+            symbol = signal.symbol
+
+            # Log the signal
+            self._logger.log_signal(
+                symbol=symbol,
+                features_dict=signal.features,
+                signal_prob=signal.confidence,
+                action_taken="BUY" if signal.confidence >= settings.signal_threshold else "SKIP",
+            )
+
+            if signal.confidence < settings.signal_threshold:
+                return
+
+            # Earnings blackout for equity
+            if asset_class == "equity":
+                try:
+                    from signals.filters import EarningsFilter
+
+                    if EarningsFilter().is_blackout(symbol):
+                        log.info("signal_skipped_earnings_blackout", symbol=symbol)
+                        return
+                except Exception:
+                    pass
+
+            # Extract entry specifications
+            if signal.entry is None:
+                log.warning("signal_missing_entry_spec", signal_id=signal.signal_id, symbol=symbol)
+                return
+
+            entry_price = signal.entry.entry_price
+            current_price = entry_price  # Use signal's entry price
+
+            # Risk sizing from signal
+            size_pct = signal.risk.size_hint_pct if signal.risk else 0.01
+            capital = self._cached_capital
+            size_inr = capital * size_pct
+
+            qty = self._sizer.shares(size_inr, current_price) if current_price > 0 else 0
+
+            if qty <= 0:
+                return
+
+            order_id = self._executor.place_market_order(
+                symbol=symbol,
+                transaction_type="BUY",
+                quantity=qty,
+                tag=f"signal_{signal.strategy_name}_{signal.confidence:.2f}",
+            )
+            self._open_positions.add(symbol)
+            log.info(
+                "signal_order_placed",
+                signal_id=signal.signal_id,
+                symbol=symbol,
+                strategy=signal.strategy_name,
+                qty=qty,
+                confidence=round(signal.confidence, 3),
+                order_id=order_id,
+            )
+
+            # Buy alert
+            self._send_alert(
+                f"📈 {signal.strategy_name.upper()} BUY {symbol} | "
+                f"confidence={signal.confidence:.2%} | qty={qty} | price={current_price:,.2f}"
+            )
+
+        except Exception as exc:
+            log.error("signal_based_execution_error", symbol=signal.symbol, error=str(exc))
 
     # ------------------------------------------------------------------
     # Internal — universe loaders

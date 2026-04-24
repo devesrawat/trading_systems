@@ -59,3 +59,40 @@ fo:
   iv_premium_threshold: 0.05
   max_concurrent_positions: 3
   delta_tolerance: 0.10
+
+strategies:
+  - name: vcp
+    class_path: signals.strategies.vcp.VCPStrategy
+    enabled: true
+    asset_classes: [equity]
+    interval: day
+    lookback_days: 400
+    params: {}
+    risk_profile: default
+    mode: research
+    schedule: null
+    min_backtest_status: null
+
+  - name: rs_breakout
+    class_path: signals.strategies.rs_breakout.RSBreakoutStrategy
+    enabled: true
+    asset_classes: [equity]
+    interval: day
+    lookback_days: 300
+    params: {}
+    risk_profile: default
+    mode: research
+    schedule: null
+    min_backtest_status: null
+
+  - name: tight_closes
+    class_path: signals.strategies.tight_closes.TightClosesStrategy
+    enabled: true
+    asset_classes: [equity]
+    interval: day
+    lookback_days: 200
+    params: {}
+    risk_profile: default
+    mode: research
+    schedule: null
+    min_backtest_status: null
