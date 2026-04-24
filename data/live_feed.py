@@ -130,27 +130,26 @@ class BarAggregator:
     def update(self, symbol: str, price: float, volume: int, ts: datetime) -> None:
         bar_ts = _floor_to_interval(ts, self._interval)
 
+        closed_bar = None
         with self._locks[symbol]:
             existing = self._bars.get(symbol)
 
             if existing is None:
                 self._bars[symbol] = _Bar(price, volume, bar_ts)
-                return
-
-            if bar_ts > existing.ts:
+            elif bar_ts > existing.ts:
                 # bar boundary crossed — close the old bar, open a new one
-                closed = existing
+                closed_bar = existing
                 self._bars[symbol] = _Bar(price, volume, bar_ts)
             else:
                 existing.update(price, volume)
-                return
 
-        # fire callbacks outside the lock
-        for cb in self._on_close:
-            try:
-                cb(symbol, closed)
-            except Exception as exc:
-                log.error("bar_close_callback_error", symbol=symbol, error=str(exc))
+        # fire callbacks AFTER lock is released but with safe bar reference
+        if closed_bar:
+            for cb in self._on_close:
+                try:
+                    cb(symbol, closed_bar)
+                except Exception as exc:
+                    log.error("bar_close_callback_error", symbol=symbol, error=str(exc))
 
 
 # ---------------------------------------------------------------------------
@@ -221,6 +220,10 @@ class _TickProcessor:
     Drains *buffer*, batches Redis writes, feeds BarAggregator.
     """
 
+    _TICK_BUFFER_DROP_THRESHOLD = 0.8
+    _RETRY_MAX_ATTEMPTS = 3
+    _RETRY_BASE_DELAY = 0.5
+
     def __init__(
         self,
         buffer: deque,
@@ -234,6 +237,7 @@ class _TickProcessor:
         self._vcp_checker = vcp_checker
         self._r = get_redis()
         self._running = False
+        self._total_drops = 0
 
     def start(self) -> None:
         self._running = True
@@ -245,6 +249,15 @@ class _TickProcessor:
 
     def _run(self) -> None:
         while self._running:
+            # Monitor buffer usage
+            buf_usage = len(self._buf) / self._buf.maxlen
+            if buf_usage > self._TICK_BUFFER_DROP_THRESHOLD:
+                log.warning(
+                    "tick_buffer_backpressure",
+                    usage_pct=round(buf_usage * 100, 1),
+                    total_drops=self._total_drops,
+                )
+
             if not self._buf:
                 time.sleep(_FLUSH_INTERVAL_SEC)
                 continue
@@ -261,7 +274,10 @@ class _TickProcessor:
                 self._process_batch(batch)
 
     def _process_batch(self, ticks: list[dict]) -> None:
+        import redis as redis_lib
+
         pipe = self._r.pipeline(transaction=False)
+        batch_size = len(ticks)
 
         for tick in ticks:
             token = tick.get("instrument_token")
@@ -288,11 +304,39 @@ class _TickProcessor:
                 ts = ts_raw if isinstance(ts_raw, datetime) else datetime.fromisoformat(str(ts_raw))
                 self._bar_agg.update(symbol, float(ltp), volume, ts)
 
-        # Single round-trip for all tick updates in this batch
-        try:
-            pipe.execute()
-        except Exception as exc:
-            log.error("redis_pipeline_flush_failed", error=str(exc))
+        # Retry loop: exponential backoff
+        for attempt in range(self._RETRY_MAX_ATTEMPTS):
+            try:
+                pipe.execute()
+                return  # Success
+            except redis_lib.RedisError as exc:
+                if attempt < self._RETRY_MAX_ATTEMPTS - 1:
+                    wait = min(self._RETRY_BASE_DELAY * (2**attempt), 5.0)
+                    log.warning(
+                        "redis_pipeline_retry",
+                        attempt=attempt + 1,
+                        wait_sec=round(wait, 2),
+                        batch_size=batch_size,
+                        error=str(exc),
+                    )
+                    time.sleep(wait)
+                    pipe = self._r.pipeline(transaction=False)  # Fresh pipeline
+                    # Rebuild pipeline for retry (simplified: just retry same ticks)
+                    for tick in ticks:
+                        # Rebuild only the tick set, not bar aggregation
+                        token = tick.get("instrument_token")
+                        if token:
+                            pipe.setex(RedisKeys.tick(token), _TICK_TTL_SEC, json.dumps(tick))
+                else:
+                    self._total_drops += batch_size
+                    log.critical(
+                        "redis_pipeline_exhausted_retries",
+                        batch_size=batch_size,
+                        total_dropped=self._total_drops,
+                        error=str(exc),
+                    )
+                    # Don't raise—let processor continue, but data is lost
+                    # (would rather lose ticks than crash the feed)
 
     def _update_day_bar(self, symbol: str, tick: dict, pipe: Any) -> None:
         """Store live day-bar from MODE_QUOTE ohlc field."""
@@ -357,12 +401,9 @@ class LiveFeed:
     def store_vcp_pivots(self, candidates: list[dict]) -> None:
         """
         Persist VCP pivot levels for breakout detection.
-        *candidates* is the output of scan_vcp_universe().
-
-        Requires avg_vol_50d in each candidate dict — add it from the DB
-        before calling this.  Symbols NOT in candidates have their pivot cleared.
+        Uses a Redis set for O(1) membership tracking instead of KEYS scan.
         """
-        current_keys = set(self._r.keys("vcp:pivot:*"))
+        pipe = self._r.pipeline(transaction=False)
         new_symbols = set()
 
         for c in candidates:
@@ -370,13 +411,19 @@ class LiveFeed:
             pivot = c["pivot_buy"]
             avg_vol = c.get("avg_vol_50d", 1_000_000)
             self._vcp_checker.store_pivot(sym, pivot, avg_vol)
-            new_symbols.add(f"vcp:pivot:{sym}")
+            new_symbols.add(sym)
+            pipe.sadd(RedisKeys.CURRENT_VCP_SYMBOLS, sym)
 
-        # Remove stale pivots (stocks that dropped off the scan)
-        for stale_key in current_keys - new_symbols:
-            self._r.delete(stale_key)
-            log.debug("vcp_pivot_cleared", key=stale_key)
+        # Get old symbols from set (O(1) vs O(n) KEYS scan)
+        old_symbols = set(self._r.smembers(RedisKeys.CURRENT_VCP_SYMBOLS))
 
+        # Remove stale pivots
+        for stale_sym in old_symbols - new_symbols:
+            pipe.delete(f"vcp:pivot:{stale_sym}")
+            pipe.srem(RedisKeys.CURRENT_VCP_SYMBOLS, stale_sym)
+            log.debug("vcp_pivot_cleared", symbol=stale_sym)
+
+        pipe.execute()
         log.info("vcp_pivots_stored", count=len(candidates))
 
     def subscribe_breakouts(self, callback: Callable[[dict], None]) -> None:
