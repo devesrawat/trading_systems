@@ -38,14 +38,32 @@ _ALEMBIC_INI = Path(__file__).parent.parent / "alembic.ini"
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
+        import os
+
+        # Dynamic pool sizing based on CPU count and concurrent workers
+        cpu_count = os.cpu_count() or 4
+        workers = min(cpu_count, 8)  # scanner engine uses up to 8 workers
+
+        # Each worker may need 2–3 connections (fetch + insert)
+        pool_size = max(20, workers * 3)
+        max_overflow = max(pool_size // 2, 10)  # 50% emergency headroom
+
         _engine = create_engine(
             settings.timescale_url,
             poolclass=QueuePool,
-            pool_size=10,  # raised from 5 — bulk_ingest uses up to 6 threads
-            max_overflow=20,  # raised from 10 — scanner fan-out needs headroom
+            pool_size=pool_size,
+            max_overflow=max_overflow,
             pool_pre_ping=True,
+            pool_recycle=3600,  # Recycle stale connections hourly
+            echo=False,  # Disable SQL logging (expensive in tight loops)
         )
-        log.info("db_engine_created", url=settings.timescale_url)
+        log.info(
+            "db_engine_created",
+            url=settings.timescale_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
+            workers=workers,
+        )
     return _engine
 
 
