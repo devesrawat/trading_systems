@@ -75,34 +75,36 @@ class CircuitBreaker:
 
         if self._halted:
             result = False, self._halt_reason
-        # Daily drawdown
-        elif self._daily_start_capital > 0:
-            daily_dd = (self._daily_start_capital - current_capital) / self._daily_start_capital
-            if daily_dd > self.daily_limit:
-                reason = f"daily drawdown {daily_dd:.2%} exceeded limit {self.daily_limit:.2%}"
-                self.halt(reason)
-                result = False, reason
-            else:
-                result = True, None
-        # Weekly drawdown
-        elif self._weekly_start_capital > 0:
-            weekly_dd = (self._weekly_start_capital - current_capital) / self._weekly_start_capital
-            if weekly_dd > self.weekly_limit:
-                reason = f"weekly drawdown {weekly_dd:.2%} exceeded limit {self.weekly_limit:.2%}"
-                self.halt(reason)
-                result = False, reason
-            else:
-                result = True, None
-        # Consecutive losses
-        elif self._consecutive_losses >= self.max_consecutive_losses:
-            reason = (
-                f"consecutive losses {self._consecutive_losses} "
-                f"reached limit {self.max_consecutive_losses}"
-            )
-            self.halt(reason)
-            result = False, reason
         else:
             result = True, None
+            # Daily drawdown
+            if self._daily_start_capital > 0:
+                daily_dd = (self._daily_start_capital - current_capital) / self._daily_start_capital
+                if daily_dd > self.daily_limit:
+                    reason = f"daily drawdown {daily_dd:.2%} exceeded limit {self.daily_limit:.2%}"
+                    self.halt(reason)
+                    result = False, reason
+            # Weekly drawdown
+            if self._weekly_start_capital > 0 and result[0]:  # Only check if not already halted
+                weekly_dd = (
+                    self._weekly_start_capital - current_capital
+                ) / self._weekly_start_capital
+                if weekly_dd > self.weekly_limit:
+                    reason = (
+                        f"weekly drawdown {weekly_dd:.2%} exceeded limit {self.weekly_limit:.2%}"
+                    )
+                    self.halt(reason)
+                    result = False, reason
+            # Consecutive losses
+            if (
+                self._consecutive_losses >= self.max_consecutive_losses and result[0]
+            ):  # Only check if not already halted
+                reason = (
+                    f"consecutive losses {self._consecutive_losses} "
+                    f"reached limit {self.max_consecutive_losses}"
+                )
+                self.halt(reason)
+                result = False, reason
 
         # Cache result
         self._check_cache = result
