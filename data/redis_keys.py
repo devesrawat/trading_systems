@@ -48,6 +48,8 @@ class RedisKeys:
         """``trading:signal:vcp:pivot:{symbol}``"""
         return f"trading:signal:vcp:pivot:{symbol}"
 
+    CURRENT_VCP_SYMBOLS: str = "trading:signal:vcp:symbols"  # Set of active symbols
+
     @staticmethod
     def bar_day(symbol: str) -> str:
         """``trading:bar:day:{symbol}``"""
