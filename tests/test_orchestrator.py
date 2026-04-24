@@ -63,6 +63,8 @@ def _make_system(market_type: str = "equity", **settings_overrides) -> TradingSy
     mock_executor.place_market_order.return_value = "ORDER_001"
     mock_monitor = MagicMock()
     mock_monitor.get_drawdown.return_value = {"daily_dd": 0.0, "weekly_dd": 0.0}
+    mock_monitor._initial_capital = 500_000.0
+    mock_monitor._positions = {}
 
     mock_equity_provider = MagicMock()
     mock_crypto_provider = MagicMock()

@@ -52,7 +52,6 @@ class CircuitBreaker:
 
         # Phase 9 Quick Win 1: Track state mutations for batch persistence
         self._dirty: bool = False
-        self._pending_mutations: list[dict] = []
 
         self._load_state()
 
@@ -67,7 +66,7 @@ class CircuitBreaker:
         Evaluates all breaker conditions. If any breach is detected,
         calls halt() and returns (False, reason).
         Always returns (False, reason) when already halted.
-        
+
         Phase 9 Quick Win 2: Caches result; recomputes only on state changes.
         """
         # Check cache first (O(1))
@@ -114,7 +113,7 @@ class CircuitBreaker:
         """
         Engage the circuit breaker. Only the first call sets the reason.
         Sends a Telegram alert and marks state as dirty for batch persistence.
-        
+
         Phase 9 Quick Win 1: State changes marked dirty; persisted at cycle end.
         """
         if self._halted:
@@ -274,7 +273,7 @@ class CircuitBreaker:
         """
         Fire-and-forget DB write to avoid blocking the hot path.
         DB audit happens asynchronously in background thread.
-        
+
         Phase 9 Quick Win 1: Decouple DB writes from hot path.
         """
         from concurrent.futures import ThreadPoolExecutor
@@ -285,9 +284,7 @@ class CircuitBreaker:
             self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="circuit_db_")
 
         with suppress(Exception):
-            self._executor.submit(
-                self._write_circuit_event, event_type, reason, capital
-            )
+            self._executor.submit(self._write_circuit_event, event_type, reason, capital)
 
     # ------------------------------------------------------------------
     # State persistence
@@ -311,7 +308,7 @@ class CircuitBreaker:
         """
         Flush all pending mutations to Redis in a single batch operation.
         Called at the end of each trading cycle to persist accumulated state changes.
-        
+
         Phase 9 Quick Win 1: Batch Redis writes — reduces 50+ round-trips to 1.
         """
         if self._dirty:
