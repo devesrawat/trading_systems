@@ -114,9 +114,9 @@ class CircuitBreaker:
     def halt(self, reason: str) -> None:
         """
         Engage the circuit breaker. Only the first call sets the reason.
-        Sends a Telegram alert and marks state as dirty for batch persistence.
+        Sends a Telegram alert and persists state immediately (critical action).
 
-        Phase 9 Quick Win 1: State changes marked dirty; persisted at cycle end.
+        Phase 9 Quick Win 1: Halt state is persisted immediately, not batched.
         """
         if self._halted:
             return  # already halted — don't overwrite reason
@@ -135,6 +135,9 @@ class CircuitBreaker:
             )
         except Exception as exc:
             log.warning("telegram_alert_failed", error=str(exc))
+
+        # Persist halt immediately (critical state change, not batched)
+        self._persist_state()
 
         # Async write to DB (fire-and-forget) — don't block hot path
         self._write_circuit_event_async("halt", reason)
