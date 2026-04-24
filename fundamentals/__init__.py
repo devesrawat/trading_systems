@@ -7,6 +7,7 @@ Composite scoring of growth companies based on:
 - Balance sheet: Debt ratios, interest coverage, liquidity
 - Valuation: PE relative to growth (PEG), enterprise value
 - Momentum: Institutional ownership, price momentum, sector relative strength
+- Institutional Conviction: Smart money accumulation patterns (FII/DII/MF holdings)
 
 All scores deterministic, calibrated for Indian small-cap multibaggers.
 """
@@ -16,6 +17,7 @@ from __future__ import annotations
 __all__ = [
     "BaseFundamentalsProvider",
     "FundamentalsScores",
+    "InstitutionalHolding",
     "MultibaggerWatchlist",
     "NSEProvider",
     "QuarterlyFinancials",
@@ -26,6 +28,7 @@ __all__ = [
     "compute_balance_sheet_score",
     "compute_composite_rank",
     "compute_growth_score",
+    "compute_institutional_conviction_score",
     "compute_momentum_score",
     "compute_quality_score",
     "compute_valuation_score",
@@ -44,6 +47,7 @@ from fundamentals.providers import (
 from fundamentals.ranking import compute_composite_rank
 from fundamentals.schema import (
     FundamentalsScores,
+    InstitutionalHolding,
     QuarterlyFinancials,
     Shareholding,
     Valuations,
@@ -51,6 +55,7 @@ from fundamentals.schema import (
 from fundamentals.scoring import (
     compute_balance_sheet_score,
     compute_growth_score,
+    compute_institutional_conviction_score,
     compute_momentum_score,
     compute_quality_score,
     compute_valuation_score,

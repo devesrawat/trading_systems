@@ -29,6 +29,7 @@ from fundamentals.schema import (
 from fundamentals.scoring import (
     compute_balance_sheet_score,
     compute_growth_score,
+    compute_institutional_conviction_score,
     compute_momentum_score,
     compute_quality_score,
     compute_valuation_score,
@@ -539,13 +540,14 @@ class TestRanking:
     """Composite ranking computation."""
 
     def test_composite_rank_weighted_average(self):
-        """Composite should be weighted average of scores."""
-        composite, _ = compute_composite_rank(
+        """Composite should be weighted average of scores (6 dimensions)."""
+        composite, _, _ = compute_composite_rank(
             growth_score=80.0,
             quality_score=80.0,
             balance_sheet_score=80.0,
             valuation_score=80.0,
             momentum_score=80.0,
+            institutional_conviction_score=80.0,
         )
         assert composite == 80.0
 
@@ -554,12 +556,13 @@ class TestRanking:
         growth_high = 90.0
         others = 50.0
 
-        composite, growth_weighted = compute_composite_rank(
+        composite, growth_weighted, _ = compute_composite_rank(
             growth_score=growth_high,
             quality_score=others,
             balance_sheet_score=others,
             valuation_score=others,
             momentum_score=others,
+            institutional_conviction_score=others,
         )
 
         # Growth-weighted should give more weight to growth
@@ -567,12 +570,13 @@ class TestRanking:
 
     def test_multibagger_ideal_profile(self):
         """Ideal multibagger: high growth, good quality, healthy balance sheet."""
-        composite, growth_weighted = compute_composite_rank(
+        composite, growth_weighted, _ = compute_composite_rank(
             growth_score=85.0,
             quality_score=78.0,
             balance_sheet_score=82.0,
             valuation_score=70.0,
             momentum_score=75.0,
+            institutional_conviction_score=80.0,
         )
         assert composite > 75
         assert growth_weighted > 75
@@ -584,7 +588,7 @@ class TestRanking:
                 for b in [0, 50, 100]:
                     for v in [0, 50, 100]:
                         for m in [0, 50, 100]:
-                            c, gw = compute_composite_rank(g, q, b, v, m)
+                            c, gw, _ = compute_composite_rank(g, q, b, v, m, 50.0)
                             assert 0 <= c <= 100
                             assert 0 <= gw <= 100
 
@@ -596,14 +600,16 @@ class TestRanking:
             "balance_sheet": 0.15,
             "valuation": 0.05,
             "momentum": 0.05,
+            "institutional_conviction": 0.0,
         }
 
-        composite, _ = compute_composite_rank(
+        composite, _, _ = compute_composite_rank(
             growth_score=100.0,
             quality_score=0.0,
             balance_sheet_score=0.0,
             valuation_score=0.0,
             momentum_score=0.0,
+            institutional_conviction_score=0.0,
             weights=custom_weights,
         )
 
@@ -843,6 +849,7 @@ class TestMultibaggerWatchlist:
             balance_sheet_score=80.0,
             valuation_score=70.0,
             momentum_score=70.0,
+            institutional_conviction_score=75.0,
         )
 
         # Should have non-zero composite rank
@@ -877,11 +884,384 @@ class TestMultibaggerWatchlist:
 
 
 # =========================================================================
+# Institutional Conviction Tests
+# =========================================================================
+
+
+class TestInstitutionalConviction:
+    """Tests for institutional conviction scoring."""
+
+    def test_conviction_base_holding_count(self):
+        """Base conviction: holding count normalization."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        # Low count (60 total = 20% of benchmark)
+        score = compute_institutional_conviction_score(
+            fii_count=10,
+            dii_count=20,
+            mf_count=30,
+            total_institutional_pct=None,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+        assert 15 <= score <= 25  # Low conviction (normalized holding ≈ 20)
+
+        # High count (300 total = excellent, gets capped at 100)
+        score = compute_institutional_conviction_score(
+            fii_count=100,
+            dii_count=100,
+            mf_count=100,
+            total_institutional_pct=None,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+        assert score == 100.0  # Capped at 100 with excellent holding count
+
+    def test_conviction_base_ownership(self):
+        """Base conviction: institutional ownership tiers."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        # High ownership (15%+)
+        score = compute_institutional_conviction_score(
+            fii_count=None,
+            dii_count=None,
+            mf_count=None,
+            total_institutional_pct=20.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+        assert 75 <= score <= 95  # High tier
+
+        # Medium ownership (10%)
+        score = compute_institutional_conviction_score(
+            fii_count=None,
+            dii_count=None,
+            mf_count=None,
+            total_institutional_pct=10.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+        assert 55 <= score <= 75  # Medium tier
+
+        # Low ownership (<5%)
+        score = compute_institutional_conviction_score(
+            fii_count=None,
+            dii_count=None,
+            mf_count=None,
+            total_institutional_pct=2.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+        assert 15 <= score <= 35  # Low tier
+
+    def test_conviction_price_multiplier_undervalued(self):
+        """Price multiplier: undervalued (small rally) = 2.0x boost."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        base = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+
+        # Less than 5% rally: 2.0x multiplier
+        undervalued = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=3.0,
+            quarters_increasing_holding=None,
+        )
+        assert undervalued > base * 1.5  # Significant boost
+
+    def test_conviction_price_multiplier_rally(self):
+        """Price multiplier: excessive rally (>50%) = 0.3x penalty."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        base = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+
+        # >50% rally: 0.3x multiplier
+        bubbled = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=75.0,
+            quarters_increasing_holding=None,
+        )
+        assert bubbled < base * 0.5  # Significant penalty
+
+    def test_conviction_trend_multiplier(self):
+        """Trend multiplier: each quarter of increasing holdings adds 1.1x."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        base = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=0,
+        )
+
+        # 2 quarters increasing: 1.1^2 = 1.21x
+        two_quarter = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=2,
+        )
+        assert 1.15 <= two_quarter / base <= 1.30  # ~1.21x
+
+        # 3 quarters increasing: 1.1^3 = 1.331x
+        three_quarter = compute_institutional_conviction_score(
+            fii_count=50,
+            dii_count=50,
+            mf_count=100,
+            total_institutional_pct=12.0,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=3,
+        )
+        assert 1.25 <= three_quarter / base <= 1.40  # ~1.331x
+
+    def test_conviction_combined_multipliers(self):
+        """Combined: base * price_mult * trend_mult."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        # High conviction + undervalued + 2 quarters increasing
+        score = compute_institutional_conviction_score(
+            fii_count=80,
+            dii_count=80,
+            mf_count=150,
+            total_institutional_pct=18.0,
+            price_change_since_entry_pct=4.0,  # 2.0x multiplier
+            quarters_increasing_holding=2,  # 1.21x multiplier
+        )
+        # Base ≈ 80-90, with 2.0x * 1.21x ≈ 2.42x
+        assert score > 90  # Strong conviction
+
+        # Low conviction + rallied + no trend
+        score = compute_institutional_conviction_score(
+            fii_count=10,
+            dii_count=10,
+            mf_count=20,
+            total_institutional_pct=3.0,
+            price_change_since_entry_pct=60.0,  # 0.3x multiplier
+            quarters_increasing_holding=0,
+        )
+        # Base ≈ 25-35, with 0.3x penalty
+        assert score < 30  # Weak conviction
+
+    def test_conviction_score_capped_100(self):
+        """Score capped at 100 max."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        score = compute_institutional_conviction_score(
+            fii_count=150,
+            dii_count=150,
+            mf_count=200,
+            total_institutional_pct=25.0,
+            price_change_since_entry_pct=1.0,  # 2.0x
+            quarters_increasing_holding=5,  # 1.1^5 = 1.61x
+        )
+        assert score <= 100  # Capped
+
+    def test_conviction_all_missing_data(self):
+        """All data missing: neutral score of 50."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        score = compute_institutional_conviction_score(
+            fii_count=None,
+            dii_count=None,
+            mf_count=None,
+            total_institutional_pct=None,
+            price_change_since_entry_pct=None,
+            quarters_increasing_holding=None,
+        )
+        assert score == 50.0  # Neutral
+
+
+# =========================================================================
 # Integration Tests
 # =========================================================================
 
 
 class TestIntegration:
+    """Integration tests with multiple components."""
+
+    def test_end_to_end_scoring_pipeline_6d(
+        self,
+        sample_financials: QuarterlyFinancials,
+        sample_valuations: Valuations,
+        sample_shareholding: Shareholding,
+    ):
+        """End-to-end: compute all 6 scores and create composite rank."""
+        from fundamentals.scoring import compute_institutional_conviction_score
+
+        # Extract metrics from samples
+        growth_score = compute_growth_score(
+            revenue_cagr_3y=25.0,
+            revenue_cagr_5y=22.0,
+            net_income_cagr_3y=28.0,
+            net_income_cagr_5y=25.0,
+        )
+        quality_score = compute_quality_score(
+            roe=sample_valuations.roe,
+            roce=sample_valuations.roce,
+            profit_margin=sample_valuations.profit_margin,
+            ebitda_margin=sample_valuations.ebitda_margin,
+        )
+        balance_sheet_score = compute_balance_sheet_score(
+            debt_to_equity=sample_valuations.debt_to_equity,
+            debt_to_revenue=None,
+            current_ratio=sample_valuations.current_ratio,
+            interest_coverage=sample_valuations.interest_coverage,
+        )
+        valuation_score = compute_valuation_score(
+            pe=sample_valuations.pe,
+            peg=sample_valuations.peg,
+            pb=sample_valuations.pb,
+            ps=sample_valuations.ps,
+        )
+        momentum_score = compute_momentum_score(
+            institutional_pct=sample_shareholding.institutional_pct,
+            fii_change_pct=sample_shareholding.fii_change_pct,
+            dii_change_pct=sample_shareholding.dii_change_pct,
+            price_momentum_3m=None,
+        )
+        institutional_conviction_score = compute_institutional_conviction_score(
+            fii_count=45,
+            dii_count=82,
+            mf_count=156,
+            total_institutional_pct=35.2,
+            price_change_since_entry_pct=8.5,
+            quarters_increasing_holding=2,
+        )
+
+        # Composite rank with 6 dimensions
+        composite, growth_weighted, _ = compute_composite_rank(
+            growth_score=growth_score,
+            quality_score=quality_score,
+            balance_sheet_score=balance_sheet_score,
+            valuation_score=valuation_score,
+            momentum_score=momentum_score,
+            institutional_conviction_score=institutional_conviction_score,
+        )
+
+        assert all(
+            0 <= s <= 100
+            for s in [
+                growth_score,
+                quality_score,
+                balance_sheet_score,
+                valuation_score,
+                momentum_score,
+                institutional_conviction_score,
+                composite,
+                growth_weighted,
+            ]
+        )
+        assert composite > 0
+        assert growth_weighted > 0
+        # Conviction contributes to composite (20% weight)
+        assert composite > 50  # Strong candidate
+
+    def test_watchlist_conviction_filtering(self, clear_redis_watchlist):
+        """Watchlist: filter by institutional conviction."""
+        watchlist = MultibaggerWatchlist()
+
+        # Add high-conviction stock
+
+        high_conviction_scores = FundamentalsScores(
+            symbol="GROW1",
+            timestamp=datetime.now(UTC),
+            source="fundamentals",
+            growth_score=80,
+            quality_score=75,
+            balance_sheet_score=72,
+            valuation_score=68,
+            momentum_score=65,
+            institutional_conviction_score=85,
+            composite_rank=75,
+        )
+        watchlist.add_scores("GROW1", high_conviction_scores)
+
+        # Add low-conviction stock
+        low_conviction_scores = FundamentalsScores(
+            symbol="GROW2",
+            timestamp=datetime.now(UTC),
+            source="fundamentals",
+            growth_score=78,
+            quality_score=73,
+            balance_sheet_score=70,
+            valuation_score=66,
+            momentum_score=63,
+            institutional_conviction_score=35,
+            composite_rank=70,
+        )
+        watchlist.add_scores("GROW2", low_conviction_scores)
+
+        # Filter by min conviction
+        results = watchlist.get_top_n(n=10, min_institutional_conviction=70)
+        assert len(results) == 1
+        assert results[0][0] == "GROW1"
+
+    def test_watchlist_conviction_with_low_rally(self, clear_redis_watchlist):
+        """Watchlist: conviction_with_low_rally boosts positions."""
+        watchlist = MultibaggerWatchlist()
+
+        # High conviction positions
+        s1 = FundamentalsScores(
+            symbol="ACUM1",
+            timestamp=datetime.now(UTC),
+            source="fundamentals",
+            growth_score=75,
+            quality_score=70,
+            balance_sheet_score=68,
+            valuation_score=65,
+            momentum_score=60,
+            institutional_conviction_score=78,
+            composite_rank=70,
+        )
+        watchlist.add_scores("ACUM1", s1)
+
+        s2 = FundamentalsScores(
+            symbol="ACUM2",
+            timestamp=datetime.now(UTC),
+            source="fundamentals",
+            growth_score=80,
+            quality_score=75,
+            balance_sheet_score=73,
+            valuation_score=70,
+            momentum_score=65,
+            institutional_conviction_score=65,
+            composite_rank=73,
+        )
+        watchlist.add_scores("ACUM2", s2)
+
+        # Get top N with conviction_with_low_rally boost
+        results = watchlist.get_top_n(
+            n=10, conviction_with_low_rally=True, sort_by="conviction_with_low_rally"
+        )
+        # ACUM1 with conviction 78 gets boosted to 85
+        # ACUM2 with conviction 65 stays at 73
+        assert len(results) >= 2
+        # First should be boosted position
+        assert results[0][1].conviction_with_low_rally > results[1][1].conviction_with_low_rally
+
     """Integration tests with multiple components."""
 
     def test_end_to_end_scoring_pipeline(
@@ -922,13 +1302,22 @@ class TestIntegration:
             dii_change_pct=sample_shareholding.dii_change_pct,
             price_momentum_3m=None,
         )
+        institutional_conviction_score = compute_institutional_conviction_score(
+            fii_count=45,
+            dii_count=82,
+            mf_count=156,
+            total_institutional_pct=35.2,
+            price_change_since_entry_pct=8.5,
+            quarters_increasing_holding=2,
+        )
 
-        composite, growth_weighted = compute_composite_rank(
+        composite, growth_weighted, _ = compute_composite_rank(
             growth_score=growth_score,
             quality_score=quality_score,
             balance_sheet_score=balance_sheet_score,
             valuation_score=valuation_score,
             momentum_score=momentum_score,
+            institutional_conviction_score=institutional_conviction_score,
         )
 
         assert all(
@@ -939,6 +1328,7 @@ class TestIntegration:
                 balance_sheet_score,
                 valuation_score,
                 momentum_score,
+                institutional_conviction_score,
                 composite,
                 growth_weighted,
             ]

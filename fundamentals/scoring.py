@@ -446,3 +446,94 @@ def compute_momentum_score(
         return 50.0  # Neutral if all missing
 
     return sum(scores) / len(scores)
+
+
+def compute_institutional_conviction_score(
+    fii_count: int | None,
+    dii_count: int | None,
+    mf_count: int | None,
+    total_institutional_pct: float | None,
+    price_change_since_entry_pct: float | None,
+    quarters_increasing_holding: int | None,
+) -> float:
+    """
+    Institutional conviction score based on smart money accumulation patterns.
+
+    Formula:
+    1. Base conviction (0-100):
+       - Holding counts normalized: (fii + dii + mf) / 300 * 100, capped at 100
+       - Institutional ownership: 15%+ = high conviction, 10%+ = medium, <10% = low
+       - Base = (holding_count_norm + ownership_norm) / 2
+
+    2. Price momentum multiplier (applied if price_change available):
+       - <5% change: 2.0x (undervalued, smart money not chasing)
+       - 5-10% change: 1.5x (moderate undervaluation)
+       - 10-15% change: 1.2x (some rally but controlled)
+       - 15-50% change: 0.8x (excessive rally, may be over)
+       - >50% change: 0.3x (bubble territory, smart money sold)
+
+    3. Holding trend multiplier:
+       - Each quarter of increasing holdings: +1.1x
+       - E.g., 3 consecutive quarters: 1.1^3 = 1.33x
+
+    Final score = min(base * price_mult * trend_mult, 100)
+
+    Args:
+        fii_count: Number of unique FII holders
+        dii_count: Number of unique DII holders
+        mf_count: Number of unique mutual fund holders
+        total_institutional_pct: Total institutional ownership percentage
+        price_change_since_entry_pct: Price change since smart money entry (%)
+        quarters_increasing_holding: Consecutive quarters with increasing holdings
+
+    Returns:
+        Score 0-100
+    """
+    scores = []
+
+    # Base conviction from holding counts
+    if fii_count is not None or dii_count is not None or mf_count is not None:
+        holding_list: list[int | None] = [fii_count, dii_count, mf_count]
+        total_count = sum(h for h in holding_list if h is not None)
+        # Normalize: assume 300 unique holders = excellent conviction
+        holding_count_norm = min((total_count / 300.0) * 100, 100)
+        scores.append(holding_count_norm)
+
+    # Base conviction from institutional ownership
+    if total_institutional_pct is not None:
+        if total_institutional_pct >= 15:
+            ownership_norm = 85
+        elif total_institutional_pct >= 10:
+            ownership_norm = 65
+        elif total_institutional_pct >= 5:
+            ownership_norm = 45
+        else:
+            ownership_norm = 25
+        scores.append(ownership_norm)
+
+    if not scores:
+        base_conviction = 50.0  # Neutral if all missing
+    else:
+        base_conviction = sum(scores) / len(scores)
+
+    # Price momentum multiplier
+    price_multiplier = 1.0
+    if price_change_since_entry_pct is not None:
+        if price_change_since_entry_pct < 5:
+            price_multiplier = 2.0
+        elif price_change_since_entry_pct < 10:
+            price_multiplier = 1.5
+        elif price_change_since_entry_pct < 15:
+            price_multiplier = 1.2
+        elif price_change_since_entry_pct < 50:
+            price_multiplier = 0.8
+        else:
+            price_multiplier = 0.3
+
+    # Holding trend multiplier (compounding)
+    trend_multiplier = 1.0
+    if quarters_increasing_holding is not None and quarters_increasing_holding > 0:
+        trend_multiplier = 1.1**quarters_increasing_holding
+
+    final_score = min(base_conviction * price_multiplier * trend_multiplier, 100.0)
+    return round(final_score, 2)

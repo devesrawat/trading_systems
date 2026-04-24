@@ -1,7 +1,7 @@
 """
 Composite ranking from individual fundamentals scores.
 
-Weighted combination of growth, quality, balance sheet, valuation, and momentum.
+Weighted combination of growth, quality, balance sheet, valuation, momentum, and institutional conviction.
 """
 
 from __future__ import annotations
@@ -17,20 +17,24 @@ def compute_composite_rank(
     balance_sheet_score: float,
     valuation_score: float,
     momentum_score: float,
+    institutional_conviction_score: float,
     weights: dict[str, float] | None = None,
-) -> tuple[float, float | None]:
+) -> tuple[float, float | None, float | None]:
     """
-    Compute composite multibagger rank from individual scores.
+    Compute composite multibagger rank from individual scores (6 dimensions).
 
     Formula:
     - Default weights (can be overridden):
-      - growth: 35% (primary signal for multibaggers)
-      - quality: 25% (earnings stability)
-      - balance_sheet: 20% (financial health)
+      - growth: 25% (primary signal for multibaggers)
+      - quality: 20% (earnings stability)
+      - balance_sheet: 15% (financial health)
       - valuation: 15% (entry point)
       - momentum: 5% (confirmation)
-    - Returns: (composite_rank 0-100, growth_weighted_composite)
-    - growth_weighted: 50% growth, 20% quality, 15% balance sheet, 10% valuation, 5% momentum
+      - institutional_conviction: 20% (smart money accumulation)
+    - Returns: (composite_rank 0-100, growth_weighted, conviction_with_low_rally)
+    - growth_weighted: 40% growth, 20% quality, 15% balance sheet, 10% valuation, 10% momentum, 5% conviction
+    - conviction_with_low_rally: boost composite by 15 points if conviction >70 AND price_change <15%
+      (This score is computed externally - see watchlist.py)
 
     Args:
         growth_score: Growth score (0-100)
@@ -38,20 +42,22 @@ def compute_composite_rank(
         balance_sheet_score: Balance sheet score (0-100)
         valuation_score: Valuation score (0-100)
         momentum_score: Momentum score (0-100)
+        institutional_conviction_score: Institutional conviction score (0-100)
         weights: Optional override of default weights
 
     Returns:
-        Tuple of (composite_rank, growth_weighted_rank)
+        Tuple of (composite_rank, growth_weighted_rank, conviction_with_low_rally)
     """
 
-    # Default weights optimized for multibagger discovery
+    # Default weights optimized for multibagger discovery with institutional conviction
     if weights is None:
         weights = {
-            "growth": 0.35,
-            "quality": 0.25,
-            "balance_sheet": 0.20,
+            "growth": 0.25,
+            "quality": 0.20,
+            "balance_sheet": 0.15,
             "valuation": 0.15,
             "momentum": 0.05,
+            "institutional_conviction": 0.20,
         }
 
     # Validate weights sum to 1.0
@@ -66,22 +72,24 @@ def compute_composite_rank(
         for key in weights:
             weights[key] = weights[key] / total_weight
 
-    # Composite rank: standard weights
+    # Composite rank: standard weights (6 dimensions)
     composite = (
         weights["growth"] * growth_score
         + weights["quality"] * quality_score
         + weights["balance_sheet"] * balance_sheet_score
         + weights["valuation"] * valuation_score
         + weights["momentum"] * momentum_score
+        + weights["institutional_conviction"] * institutional_conviction_score
     )
 
-    # Growth-weighted: emphasize growth even more (50%)
+    # Growth-weighted: emphasize growth even more (40%)
     growth_weights = {
-        "growth": 0.50,
+        "growth": 0.40,
         "quality": 0.20,
         "balance_sheet": 0.15,
         "valuation": 0.10,
-        "momentum": 0.05,
+        "momentum": 0.10,
+        "institutional_conviction": 0.05,
     }
 
     growth_weighted = (
@@ -90,13 +98,18 @@ def compute_composite_rank(
         + growth_weights["balance_sheet"] * balance_sheet_score
         + growth_weights["valuation"] * valuation_score
         + growth_weights["momentum"] * momentum_score
+        + growth_weights["institutional_conviction"] * institutional_conviction_score
     )
+
+    # Conviction with low rally: boost composite if conviction strong + price not rallied much
+    # (Note: this is computed in watchlist.py, here we return placeholder)
+    conviction_with_low_rally = None
 
     # Clamp to 0-100
     composite = min(100.0, max(0.0, composite))
     growth_weighted = min(100.0, max(0.0, growth_weighted))
 
-    return (composite, growth_weighted)
+    return (composite, growth_weighted, conviction_with_low_rally)
 
 
 def compute_percentile(rank: float, all_ranks: list[float]) -> float | None:

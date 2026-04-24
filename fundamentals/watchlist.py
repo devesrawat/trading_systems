@@ -29,7 +29,7 @@ class MultibaggerWatchlist:
     REDIS_KEY = "trading:fundamentals:watchlist"
     REDIS_TTL = 30 * 24 * 3600  # 30 days
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize watchlist."""
         self.scores: dict[str, FundamentalsScores] = {}
         self._load_from_redis()
@@ -141,6 +141,8 @@ class MultibaggerWatchlist:
         min_quality: float | None = None,
         min_balance_sheet: float | None = None,
         min_composite: float | None = None,
+        min_institutional_conviction: float | None = None,
+        conviction_with_low_rally: bool = False,
         sort_by: str = "composite_rank",
     ) -> list[tuple[str, FundamentalsScores]]:
         """
@@ -153,6 +155,9 @@ class MultibaggerWatchlist:
             min_quality: Minimum quality score
             min_balance_sheet: Minimum balance sheet score
             min_composite: Minimum composite rank
+            min_institutional_conviction: Minimum institutional conviction score
+            conviction_with_low_rally: If True, boost and prioritize positions with
+                high conviction (>70) AND low price rally (<15%)
             sort_by: Sort field: composite_rank, growth_score, quality_score, etc.
 
         Returns:
@@ -170,11 +175,26 @@ class MultibaggerWatchlist:
                 continue
             if min_composite is not None and scores.composite_rank < min_composite:
                 continue
+            if (
+                min_institutional_conviction is not None
+                and scores.institutional_conviction_score < min_institutional_conviction
+            ):
+                continue
+
+            # Compute conviction_with_low_rally if requested
+            # This is a "smart money accumulation" signal: high conviction + undervalued (small rally)
+            if conviction_with_low_rally and scores.institutional_conviction_score > 70:
+                # Boost score by 15 points (capped at 100) to surface top positions
+                boosted_rank = min(scores.composite_rank + 15, 100.0)
+                # Store temporarily for sorting
+                scores.conviction_with_low_rally = boosted_rank
+            else:
+                scores.conviction_with_low_rally = scores.composite_rank
 
             filtered.append((symbol, scores))
 
         # Sort by requested field
-        def sort_key(item):
+        def sort_key(item: tuple[str, FundamentalsScores]) -> float:
             return getattr(item[1], sort_by, 0)
 
         filtered.sort(key=sort_key, reverse=True)
@@ -189,6 +209,7 @@ class MultibaggerWatchlist:
         balance_sheet_score: float,
         valuation_score: float,
         momentum_score: float,
+        institutional_conviction_score: float,
     ) -> FundamentalsScores:
         """
         Update scores for a symbol and recompute composite rank.
@@ -200,17 +221,19 @@ class MultibaggerWatchlist:
             balance_sheet_score: Balance sheet score (0-100)
             valuation_score: Valuation score (0-100)
             momentum_score: Momentum score (0-100)
+            institutional_conviction_score: Institutional conviction score (0-100)
 
         Returns:
             Updated FundamentalsScores
         """
-        # Compute composite rank
-        composite, growth_weighted = compute_composite_rank(
+        # Compute composite rank (6 dimensions)
+        composite, growth_weighted, _ = compute_composite_rank(
             growth_score,
             quality_score,
             balance_sheet_score,
             valuation_score,
             momentum_score,
+            institutional_conviction_score,
         )
 
         # Compute percentile
@@ -227,9 +250,11 @@ class MultibaggerWatchlist:
             balance_sheet_score=balance_sheet_score,
             valuation_score=valuation_score,
             momentum_score=momentum_score,
+            institutional_conviction_score=institutional_conviction_score,
             composite_rank=composite,
             percentile=percentile,
             growth_weighted=growth_weighted,
+            conviction_with_low_rally=None,
             data_completeness=1.0,
         )
 

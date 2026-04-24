@@ -177,6 +177,48 @@ class Shareholding(BaseModel):
     )
 
 
+class InstitutionalHolding(BaseModel):
+    """Institutional holdings for conviction scoring (FII/DII/MF accumulation patterns)."""
+
+    symbol: str = Field(..., description="Stock symbol")
+    timestamp: datetime = Field(..., description="Date of snapshot")
+    source: str = Field(..., description="Data source")
+    confidence: ConfidenceLevel = Field(default=ConfidenceLevel.medium)
+
+    # Holding counts
+    fii_count: int | None = Field(None, ge=0, description="Unique FII holder count")
+    dii_count: int | None = Field(None, ge=0, description="Unique DII holder count")
+    mf_count: int | None = Field(None, ge=0, description="Unique MF holder count")
+    total_institutional_pct: float | None = Field(
+        None, ge=0, le=100, description="Total institutional ownership %"
+    )
+
+    # Price movement tracking
+    price_change_since_entry_pct: float | None = Field(
+        None, description="Stock price change since smart money entry (%)"
+    )
+    quarters_increasing_holding: int | None = Field(
+        None, ge=0, description="Number of consecutive quarters with increasing holdings"
+    )
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "symbol": "INFY",
+                "timestamp": "2024-01-15T00:00:00Z",
+                "source": "NSE",
+                "confidence": "high",
+                "fii_count": 45,
+                "dii_count": 82,
+                "mf_count": 156,
+                "total_institutional_pct": 35.2,
+                "price_change_since_entry_pct": 8.5,
+                "quarters_increasing_holding": 2,
+            }
+        }
+    )
+
+
 class FundamentalsScores(BaseModel):
     """Composite fundamentals scores for multibagger ranking."""
 
@@ -190,6 +232,9 @@ class FundamentalsScores(BaseModel):
     balance_sheet_score: float = Field(..., ge=0, le=100, description="Balance sheet score")
     valuation_score: float = Field(..., ge=0, le=100, description="Valuation score")
     momentum_score: float = Field(..., ge=0, le=100, description="Momentum score")
+    institutional_conviction_score: float = Field(
+        default=50.0, ge=0, le=100, description="Institutional conviction score"
+    )
 
     # Composite rank (0-100)
     composite_rank: float = Field(..., ge=0, le=100, description="Weighted composite rank")
@@ -200,6 +245,9 @@ class FundamentalsScores(BaseModel):
 
     # Metadata
     growth_weighted: float | None = Field(None, description="Composite rank with growth weighting")
+    conviction_with_low_rally: float | None = Field(
+        None, description="Score for positions with high conviction + <15% price move"
+    )
     data_completeness: float = Field(
         default=0.0, ge=0, le=1, description="Fraction of available data used (0-1)"
     )
@@ -215,8 +263,10 @@ class FundamentalsScores(BaseModel):
                 "balance_sheet_score": 88,
                 "valuation_score": 65,
                 "momentum_score": 72,
+                "institutional_conviction_score": 78,
                 "composite_rank": 76,
                 "percentile": 85,
+                "conviction_with_low_rally": 85,
             }
         }
     )
