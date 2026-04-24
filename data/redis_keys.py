@@ -106,3 +106,13 @@ class RedisKeys:
     # ------------------------------------------------------------------
 
     DRIFT_REFERENCE: str = "trading:ml:drift_reference"
+
+    # ------------------------------------------------------------------
+    # Audit trail  (TTL: 30 days — audit/persistence.py)
+    # ------------------------------------------------------------------
+
+    AUDIT_SIGNALS: str = "trading:audit:signals"
+    AUDIT_TRADES: str = "trading:audit:trades"
+    AUDIT_ORDERS: str = "trading:audit:orders"
+    AUDIT_RISK_DECISIONS: str = "trading:audit:risk_decisions"
+    AUDIT_CIRCUIT_BREAKER: str = "trading:audit:circuit_breaker"

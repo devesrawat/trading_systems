@@ -159,3 +159,379 @@ class TestModelDriftMonitor:
             monitor = ModelDriftMonitor()
             score = monitor.compare_live_vs_backtest(window_trades=20)
         assert score < 0.5
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Reporting Tests
+# ---------------------------------------------------------------------------
+
+
+class TestReports:
+    """Test report formatting and content."""
+
+    def test_daily_report_format(self):
+        """Daily report should have correct format with all fields."""
+        from datetime import datetime
+
+        from monitoring.reporters import DailyMetrics, DailyReport
+
+        metrics = DailyMetrics(
+            date=datetime(2024, 1, 15),
+            scans_completed=10,
+            signals_generated=5,
+            signals_executed=3,
+            trades_entered=2,
+            trades_closed=1,
+            total_pnl=1500.0,
+            total_pnl_pct=0.03,
+            win_count=2,
+            loss_count=0,
+            win_rate=1.0,
+            avg_win=750.0,
+            avg_loss=0,
+            profit_factor=float("inf"),
+            max_intraday_dd=0.01,
+            daily_dd=0.03,
+        )
+
+        report = DailyReport.generate(metrics)
+
+        assert "DAILY REPORT" in report
+        assert "2024-01-15" in report
+        assert "10" in report  # scans
+        assert "5" in report  # signals
+        assert "3" in report  # executed
+        assert "1500" in report  # pnl
+        assert "3.00%" in report  # pnl_pct
+        assert "100.0%" in report  # win_rate
+
+    def test_weekly_report_format(self):
+        """Weekly report should include strategy performance."""
+        from datetime import datetime
+
+        from monitoring.reporters import WeeklyMetrics, WeeklyReport
+
+        metrics = WeeklyMetrics(
+            week_start=datetime(2024, 1, 8),
+            week_end=datetime(2024, 1, 14),
+            days_traded=5,
+            total_pnl=5000.0,
+            total_pnl_pct=0.1,
+            win_rate=0.75,
+            profit_factor=3.0,
+            sharpe_ratio=1.5,
+            max_drawdown=0.02,
+            strategy_performance={
+                "vcp": {"pnl": 3000, "win_rate": 0.8, "trades": 10},
+                "rs_breakout": {"pnl": 2000, "win_rate": 0.67, "trades": 6},
+            },
+            best_performer="vcp",
+            worst_performer="rs_breakout",
+            best_trade=1000.0,
+            worst_trade=-500.0,
+            average_trade=250.0,
+        )
+
+        report = WeeklyReport.generate(metrics)
+
+        assert "WEEKLY REPORT" in report
+        assert "2024-01-08" in report
+        assert "vcp" in report
+        assert "rs_breakout" in report
+        assert "3000" in report
+
+    def test_monthly_report_with_multibagger(self):
+        """Monthly report should include multibagger candidates."""
+        from datetime import datetime
+
+        from monitoring.reporters import MonthlyMetrics, MonthlyReport
+
+        metrics = MonthlyMetrics(
+            month_start=datetime(2024, 1, 1),
+            month_end=datetime(2024, 1, 31),
+            days_traded=20,
+            total_pnl=15000.0,
+            total_pnl_pct=0.3,
+            win_rate=0.65,
+            profit_factor=2.5,
+            sharpe_ratio=1.8,
+            max_drawdown=0.05,
+            calmar_ratio=6.0,
+            strategy_rankings=[("vcp", 10000), ("rs_breakout", 5000)],
+            multibagger_count=2,
+            multibagger_candidates=["INFY", "TCS"],
+        )
+
+        report = MonthlyReport.generate(metrics)
+
+        assert "MONTHLY REPORT" in report
+        assert "Multibaggers: 2" in report
+        assert "INFY" in report
+
+    def test_portfolio_status_report(self):
+        """Portfolio status should show holdings and exposure."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from monitoring.reporters import PortfolioSnapshot, PortfolioStatusReport
+
+        ps = PortfolioSnapshot(
+            timestamp=datetime(2024, 1, 15, 16, 0, 0, tzinfo=ZoneInfo("UTC")),
+            total_value=520000,
+            cash=20000,
+            invested=500000,
+            unrealized_pnl=20000,
+            unrealized_pnl_pct=0.04,
+            holdings={
+                "INFY": {"qty": 10, "avg_price": 4000, "current_price": 4100, "pnl_pct": 0.025},
+                "TCS": {"qty": 5, "avg_price": 5000, "current_price": 5100, "pnl_pct": 0.02},
+            },
+            sector_exposure={"IT": 0.8, "Finance": 0.2},
+            correlation_matrix={"INFY": {"TCS": 0.85}},
+            liquidity_score=0.95,
+        )
+
+        report = PortfolioStatusReport.generate(ps)
+
+        assert "PORTFOLIO STATUS" in report
+        assert "520" in report  # Has commas: ₹520,000
+        assert "INFY" in report
+        assert "TCS" in report
+
+    def test_system_health_report(self):
+        """System health should show status and metrics."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from monitoring.reporters import SystemHealthReport, SystemHealthSnapshot
+
+        sh = SystemHealthSnapshot(
+            timestamp=datetime(2024, 1, 15, 16, 0, 0, tzinfo=ZoneInfo("UTC")),
+            uptime_hours=24.5,
+            api_latency_ms=150.0,
+            cache_hit_rate=0.85,
+            error_rate=0.001,
+            broker_connection_status="connected",
+            db_connection_status="connected",
+        )
+
+        report = SystemHealthReport.generate(sh)
+
+        assert "SYSTEM HEALTH" in report
+        assert "✅" in report  # connected emoji
+        assert "24.5" in report
+        assert "150" in report
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Telegram Notifier Tests
+# ---------------------------------------------------------------------------
+
+
+class TestRateLimiter:
+    """Test rate limiter logic."""
+
+    def test_should_send_first_call(self):
+        """First call should always be allowed."""
+        from monitoring.telegram_notifier import RateLimiter
+
+        limiter = RateLimiter(window_seconds=60)
+        assert limiter.should_send("test_key") is True
+
+    def test_should_not_send_within_window(self):
+        """Calls within window should be rejected."""
+        from monitoring.telegram_notifier import RateLimiter
+
+        limiter = RateLimiter(window_seconds=60)
+        limiter.should_send("test_key")  # First call
+        assert limiter.should_send("test_key") is False
+
+    def test_multiple_keys_independent(self):
+        """Different keys should have independent rate limits."""
+        from monitoring.telegram_notifier import RateLimiter
+
+        limiter = RateLimiter(window_seconds=60)
+        assert limiter.should_send("key1") is True
+        assert limiter.should_send("key2") is True
+        assert limiter.should_send("key1") is False  # key1 still limited
+        assert limiter.should_send("key2") is False  # key2 still limited
+
+    def test_reset_single_key(self):
+        """Reset should clear limit for a key."""
+        from monitoring.telegram_notifier import RateLimiter
+
+        limiter = RateLimiter(window_seconds=60)
+        limiter.should_send("test_key")
+        limiter.reset("test_key")
+        assert limiter.should_send("test_key") is True
+
+    def test_reset_all_keys(self):
+        """Reset with no key should clear all limits."""
+        from monitoring.telegram_notifier import RateLimiter
+
+        limiter = RateLimiter(window_seconds=60)
+        limiter.should_send("key1")
+        limiter.should_send("key2")
+        limiter.reset()  # Reset all
+        assert limiter.should_send("key1") is True
+        assert limiter.should_send("key2") is True
+
+
+class TestTelegramNotifier:
+    """Test notifier formatting and rate limiting."""
+
+    def test_signal_alert_format(self):
+        """Signal alert should have correct format."""
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+
+        from monitoring.telegram_notifier import TelegramNotifier
+        from signals.contracts import Direction, EntrySpec, RiskSpec, Signal, SignalType
+
+        signal = Signal(
+            signal_id="test_signal",
+            timestamp=datetime(2024, 1, 15, 10, 30, 0, tzinfo=ZoneInfo("UTC")),
+            symbol="INFY",
+            exchange="NSE",
+            strategy_name="vcp",
+            confidence=0.85,
+            score=0.9,
+            signal_type=SignalType.scanner_hit,
+            direction=Direction.long,
+            entry=EntrySpec(
+                entry_price=1800.0,
+                stop_price=1750.0,
+                target_price=1900.0,
+            ),
+            risk=RiskSpec(size_hint_pct=0.01),
+        )
+
+        notifier = TelegramNotifier()
+        notifier.alert_signal(signal)  # Should not raise
+
+    def test_trade_entry_alert(self):
+        """Trade entry alert should format correctly."""
+        from monitoring.telegram_notifier import TelegramNotifier
+
+        notifier = TelegramNotifier()
+        notifier.alert_trade_entry(
+            symbol="INFY",
+            direction="long",
+            quantity=10,
+            entry_price=1800.0,
+            stop_price=1750.0,
+            target_price=1900.0,
+            risk_reward=2.0,
+        )
+
+    def test_batch_messages(self):
+        """Batch functionality should queue and flush."""
+        from monitoring.telegram_notifier import TelegramNotifier
+
+        notifier = TelegramNotifier(batch_window_sec=1)
+
+        notifier.add_to_batch("Message 1")
+        notifier.add_to_batch("Message 2")
+
+        # Messages should be queued
+        assert len(notifier._pending_batch) == 2
+
+        # Force flush should clear queue
+        notifier.flush_batch(force=True)
+        assert len(notifier._pending_batch) == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Audit Tests
+# ---------------------------------------------------------------------------
+
+
+class TestAuditLogger:
+    """Test audit logging functionality."""
+
+    def test_log_signal_entry(self):
+        """Signal logging should succeed without raising."""
+        from datetime import datetime
+
+        from audit.persistence import AuditLogger
+        from audit.schema import SignalLogEntry
+
+        entry = SignalLogEntry(
+            signal_id="test_signal",
+            timestamp=datetime.utcnow(),
+            symbol="INFY",
+            strategy_name="vcp",
+            direction="long",
+            confidence=0.85,
+            score=0.9,
+            signal_type="scanner_hit",
+            mode="paper",
+        )
+
+        AuditLogger.log_signal(entry)  # Should not raise
+
+    def test_log_trade_entry(self):
+        """Trade logging should succeed without raising."""
+        from datetime import datetime
+
+        from audit.persistence import AuditLogger
+        from audit.schema import TradeLogEntry
+
+        entry = TradeLogEntry(
+            trade_id="test_trade",
+            timestamp=datetime.utcnow(),
+            symbol="INFY",
+            direction="long",
+            order_type="entry",
+            quantity=10,
+            price=1800.0,
+            status="executed",
+        )
+
+        AuditLogger.log_trade(entry)  # Should not raise
+
+    def test_log_risk_decision(self):
+        """Risk decision logging should succeed without raising."""
+        from datetime import datetime
+
+        from audit.persistence import AuditLogger
+        from audit.schema import RiskDecisionLog
+
+        entry = RiskDecisionLog(
+            decision_id="test_decision",
+            timestamp=datetime.utcnow(),
+            decision_type="position_rejected",
+            reason="daily_dd_limit_exceeded",
+            symbol="INFY",
+        )
+
+        AuditLogger.log_risk_decision(entry)  # Should not raise
+
+
+class TestAuditQuery:
+    """Test audit query functionality."""
+
+    def test_get_signals_by_strategy_empty(self):
+        """Query for non-existent strategy should return empty list."""
+        from audit.query import AuditQuery
+
+        results = AuditQuery.get_signals_by_strategy("nonexistent_strategy")
+        assert isinstance(results, list)
+
+    def test_get_trades_by_date_empty(self):
+        """Query for trades in empty range should return empty list."""
+        from datetime import datetime, timedelta
+
+        from audit.query import AuditQuery
+
+        start = datetime.utcnow() - timedelta(days=7)
+        end = datetime.utcnow()
+        results = AuditQuery.get_trades_by_date(start, end)
+        assert isinstance(results, list)
+
+    def test_get_signal_statistics_empty(self):
+        """Statistics query on empty set should return empty dict."""
+        from audit.query import AuditQuery
+
+        stats = AuditQuery.get_signal_statistics()
+        assert isinstance(stats, dict)

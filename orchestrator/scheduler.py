@@ -200,6 +200,33 @@ class TradingScheduler:
             replace_existing=True,
         )
 
+        # Daily reporting — 16:00 IST (post-market)
+        self._scheduler.add_job(
+            func=self._safe(self._daily_reporting),
+            trigger=CronTrigger(hour=16, minute=0, day_of_week="mon-fri", timezone=_TZ_IST),
+            id="daily_reporting",
+            name="Daily reporting and summary",
+            replace_existing=True,
+        )
+
+        # Weekly reporting — Friday 17:00 IST
+        self._scheduler.add_job(
+            func=self._safe(self._weekly_reporting),
+            trigger=CronTrigger(hour=17, minute=0, day_of_week="fri", timezone=_TZ_IST),
+            id="weekly_reporting",
+            name="Weekly reporting and performance summary",
+            replace_existing=True,
+        )
+
+        # Monthly reporting — Last day of month at 17:00 IST
+        self._scheduler.add_job(
+            func=self._safe(self._monthly_reporting),
+            trigger=CronTrigger(hour=17, minute=0, day="l", timezone=_TZ_IST),
+            id="monthly_reporting",
+            name="Monthly reporting and review",
+            replace_existing=True,
+        )
+
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
@@ -245,3 +272,113 @@ class TradingScheduler:
                 log.info("fii_dii_fetched", net_fii=flows.get("fii_net"))
         except Exception as exc:
             log.warning("fii_dii_fetch_failed", error=str(exc))
+
+    def _daily_reporting(self) -> None:
+        """Generate and send daily report."""
+        try:
+            from datetime import datetime
+
+            from monitoring.reporters import DailyMetrics, DailyReport
+            from monitoring.telegram_notifier import TelegramNotifier
+
+            # Placeholder metrics — Phase 7 will compute actual values from DB
+            metrics = DailyMetrics(
+                date=datetime.utcnow(),
+                scans_completed=0,
+                signals_generated=0,
+                signals_executed=0,
+                trades_entered=0,
+                trades_closed=0,
+                total_pnl=0,
+                total_pnl_pct=0,
+                win_count=0,
+                loss_count=0,
+                win_rate=0,
+                avg_win=0,
+                avg_loss=0,
+                profit_factor=0,
+                max_intraday_dd=0,
+                daily_dd=0,
+            )
+            report = DailyReport.generate(metrics)
+            log.info("daily_report_generated")
+
+            # Send via Telegram
+            notifier = TelegramNotifier()
+            notifier.add_to_batch(report)
+            notifier.flush_batch(force=True)
+        except Exception as exc:
+            log.error("daily_reporting_failed", error=str(exc))
+
+    def _weekly_reporting(self) -> None:
+        """Generate and send weekly report."""
+        try:
+            from datetime import datetime, timedelta
+
+            from monitoring.reporters import WeeklyMetrics, WeeklyReport
+            from monitoring.telegram_notifier import TelegramNotifier
+
+            # Placeholder metrics — Phase 7 will compute actual values from DB
+            now = datetime.utcnow()
+            metrics = WeeklyMetrics(
+                week_start=now - timedelta(days=7),
+                week_end=now,
+                days_traded=5,
+                total_pnl=0,
+                total_pnl_pct=0,
+                win_rate=0,
+                profit_factor=0,
+                sharpe_ratio=0,
+                max_drawdown=0,
+                strategy_performance={},
+                best_performer="",
+                worst_performer="",
+                best_trade=0,
+                worst_trade=0,
+                average_trade=0,
+            )
+            report = WeeklyReport.generate(metrics)
+            log.info("weekly_report_generated")
+
+            # Send via Telegram
+            notifier = TelegramNotifier()
+            notifier.add_to_batch(report)
+            notifier.flush_batch(force=True)
+        except Exception as exc:
+            log.error("weekly_reporting_failed", error=str(exc))
+
+    def _monthly_reporting(self) -> None:
+        """Generate and send monthly report."""
+        try:
+            from datetime import datetime
+
+            from monitoring.reporters import MonthlyMetrics, MonthlyReport
+            from monitoring.telegram_notifier import TelegramNotifier
+
+            # Placeholder metrics — Phase 7 will compute actual values from DB
+            now = datetime.utcnow()
+            first_of_month = now.replace(day=1)
+            metrics = MonthlyMetrics(
+                month_start=first_of_month,
+                month_end=now,
+                days_traded=20,
+                total_pnl=0,
+                total_pnl_pct=0,
+                win_rate=0,
+                profit_factor=0,
+                sharpe_ratio=0,
+                max_drawdown=0,
+                calmar_ratio=0,
+                strategy_rankings=[],
+                multibagger_count=0,
+                multibagger_candidates=[],
+            )
+            report = MonthlyReport.generate(metrics)
+            log.info("monthly_report_generated")
+
+            # Send via Telegram
+            notifier = TelegramNotifier()
+            notifier.add_to_batch(report)
+            notifier.flush_batch(force=True)
+        except Exception as exc:
+            log.error("monthly_reporting_failed", error=str(exc))
