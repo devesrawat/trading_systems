@@ -45,6 +45,30 @@ model:
   reg_alpha: 0.1
   reg_lambda: 0.1
 
+# Phase 8: Ensemble and A/B testing configuration
+ensemble:
+  champion_model_path: ./models/production/champion_ensemble_v3.pkl
+  challenger_model_path: ./models/staging/challenger_ensemble_v4.pkl
+  ab_test_enabled: true
+  ab_test_enabled_for: [equity]  # or [crypto] or [equity, crypto]
+  ab_test_pct: 0.5  # 50% of signals to challenger
+  ensemble_voting_strategy: majority  # majority or weighted
+  xgb_weight: 0.4
+  lgb_weight: 0.3
+  patchtst_weight: 0.3
+
+retraining:
+  frequency: monthly
+  lookback_years: 5
+  train_window_years: 4
+  val_window_years: 1
+  test_window_months: 6
+  concept_drift_threshold: 0.5
+  trigger_on_drift: true
+  quarterly_hpo_enabled: true
+  hpo_n_trials: 20
+  hpo_warm_start: true
+
 backtest:
   min_sharpe: 1.5
   max_drawdown: 0.15
@@ -59,6 +83,7 @@ fo:
   iv_premium_threshold: 0.05
   max_concurrent_positions: 3
   delta_tolerance: 0.10
+
 
 strategies:
   - name: vcp

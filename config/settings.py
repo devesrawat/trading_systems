@@ -76,6 +76,11 @@ class Settings(BaseSettings):
     # A/B test routing — fraction of signals routed to challenger (Staging) model
     ab_test_pct: float = 0.0  # 0 = disabled; 0.2 = 20% to challenger
 
+    # Phase 8: Ensemble and A/B testing
+    ab_test_enabled: bool = False
+    ensemble_strategy: str = "majority"  # majority or weighted
+    concept_drift_threshold: float = 0.5
+
     # Feature flags
     earnings_filter_enabled: bool = False
 

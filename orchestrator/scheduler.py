@@ -218,14 +218,54 @@ class TradingScheduler:
             replace_existing=True,
         )
 
+        # A/B test reporting — Friday 17:00 IST (after weekly report)
+        self._scheduler.add_job(
+            func=self._safe(self._ab_test_reporting),
+            trigger=CronTrigger(hour=17, minute=5, day_of_week="fri", timezone=_TZ_IST),
+            id="ab_test_reporting",
+            name="A/B test weekly comparison and promotion check",
+            replace_existing=True,
+        )
+
         # Monthly reporting — Last day of month at 17:00 IST
         self._scheduler.add_job(
             func=self._safe(self._monthly_reporting),
-            trigger=CronTrigger(hour=17, minute=0, day="l", timezone=_TZ_IST),
+            trigger=CronTrigger(hour=17, minute=0, day="31", timezone=_TZ_IST),
             id="monthly_reporting",
             name="Monthly reporting and review",
             replace_existing=True,
         )
+
+        # Phase 8: Monthly ensemble retraining (1st of month, 2 AM IST)
+        self._scheduler.add_job(
+            func=self._safe(self._monthly_ensemble_retrain),
+            trigger=CronTrigger(hour=2, minute=0, day="1", timezone=_TZ_IST),
+            id="monthly_ensemble_retrain",
+            name="Phase 8 — Monthly walk-forward ensemble retraining",
+            replace_existing=True,
+        )
+
+        # Phase 8: Weekly concept drift check (Monday 6 AM IST)
+        self._scheduler.add_job(
+            func=self._safe(self._weekly_concept_drift_check),
+            trigger=CronTrigger(hour=6, minute=0, day_of_week="mon", timezone=_TZ_IST),
+            id="weekly_concept_drift_check",
+            name="Phase 8 — Weekly concept drift detection",
+            replace_existing=True,
+        )
+
+        # Phase 8: Quarterly hyperparameter optimization (1st of Q, 3 AM IST)
+        # Q1: Jan 1, Q2: Apr 1, Q3: Jul 1, Q4: Oct 1
+        for quarter_month, quarter_name in [(1, "Q1"), (4, "Q2"), (7, "Q3"), (10, "Q4")]:
+            self._scheduler.add_job(
+                func=self._safe(lambda q=quarter_name: self._quarterly_hpo(q)),
+                trigger=CronTrigger(
+                    hour=3, minute=0, day="1", month=quarter_month, timezone=_TZ_IST
+                ),
+                id=f"quarterly_hpo_{quarter_name}",
+                name=f"Phase 8 — {quarter_name} hyperparameter optimization",
+                replace_existing=True,
+            )
 
     # ------------------------------------------------------------------
     # Internal
@@ -382,3 +422,186 @@ class TradingScheduler:
             notifier.flush_batch(force=True)
         except Exception as exc:
             log.error("monthly_reporting_failed", error=str(exc))
+
+    def _ab_test_reporting(self) -> None:
+        """Generate and send A/B test weekly comparison report."""
+        try:
+            from monitoring.ab_test_reporter import ABTestReporter
+            from monitoring.telegram_notifier import TelegramNotifier
+            from orchestrator.ab_tester import ABTestOrchestrator
+
+            # Generate A/B test report
+            ab_tester = ABTestOrchestrator()
+            reporter = ABTestReporter(ab_tester=ab_tester)
+            report = reporter.generate_weekly_report(lookback_days=7)
+
+            log.info("ab_test_report_generated")
+
+            # Send via Telegram
+            notifier = TelegramNotifier()
+            notifier.send_message(report)
+
+        except Exception as exc:
+            log.error("ab_test_reporting_failed", error=str(exc))
+
+    def _monthly_ensemble_retrain(self) -> None:
+        """Phase 8: Monthly walk-forward ensemble retraining job."""
+        try:
+            from datetime import datetime, timedelta
+
+            from monitoring.telegram_notifier import TelegramNotifier
+            from signals.training.walk_forward_ensemble import WalkForwardEnsembleTrainer
+
+            log.info("monthly_ensemble_retrain_started")
+
+            # Use 5-year lookback for training
+            now = datetime.utcnow()
+            train_end = now - timedelta(days=5)  # Purge 5 days
+            train_start = train_end - timedelta(days=365 * 5)
+
+            trainer = WalkForwardEnsembleTrainer(
+                train_months=60,  # 5 years training
+                val_months=12,  # 1 year validation
+                test_months=6,  # 6 months test
+                experiment_name="ensemble_monthly_retrain",
+            )
+
+            # Run walk-forward training
+            report = trainer.run_walk_forward(
+                symbols=["INFY", "TCS", "RELIANCE", "HDFCBANK", "ICICIBANK"],
+                date_range=(train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")),
+            )
+
+            log.info(
+                "monthly_ensemble_retrain_complete",
+                auc=report.aggregate_auc,
+                folds=report.total_folds,
+                drift_detected=sum(1 for r in report.fold_results if r.drift_detected),
+            )
+
+            # Alert with results
+            notifier = TelegramNotifier()
+            notifier.send_message(
+                f"✅ Ensemble Monthly Retrain Complete\n"
+                f"Aggregate AUC: {report.aggregate_auc:.4f}\n"
+                f"Folds: {report.total_folds}\n"
+                f"Drift Events: {sum(1 for r in report.fold_results if r.drift_detected)}"
+            )
+
+        except Exception as exc:
+            log.error("monthly_ensemble_retrain_failed", error=str(exc))
+
+    def _weekly_concept_drift_check(self) -> None:
+        """Phase 8: Weekly concept drift detection (Monday 6 AM IST)."""
+        try:
+            from monitoring.telegram_notifier import TelegramNotifier
+            from signals.training.concept_drift import ConceptDriftDetector
+
+            log.info("weekly_concept_drift_check_started")
+
+            detector = ConceptDriftDetector(threshold=0.5)
+
+            # Fetch latest data
+            import pandas as pd
+
+            from data.store import get_engine
+            from signals.features import FEATURE_COLUMNS
+
+            engine = get_engine()
+            df = pd.read_sql(
+                "SELECT * FROM ohlcv WHERE time >= NOW() - INTERVAL '30 days' ORDER BY time",
+                engine,
+                parse_dates=["time"],
+                index_col="time",
+            )
+
+            if len(df) < 100:
+                log.warning("concept_drift_check_skipped_insufficient_data")
+                return
+
+            # Check drift
+            drift_result = detector.check(
+                df[FEATURE_COLUMNS] if FEATURE_COLUMNS[0] in df.columns else df
+            )
+
+            drifted_features = [f for f, p in drift_result.items() if p < 0.05]
+
+            log.info(
+                "concept_drift_check_complete",
+                drifted_features_count=len(drifted_features),
+                drifted_features=drifted_features,
+            )
+
+            if drifted_features:
+                log.warning("concept_drift_detected", features=drifted_features)
+
+                notifier = TelegramNotifier()
+                notifier.send_message(
+                    f"⚠️ Concept Drift Detected\n"
+                    f"Features: {', '.join(drifted_features[:5])}\n"
+                    f"Emergency retraining may be needed."
+                )
+
+                # Optionally trigger emergency retrain
+                self._system.retrain_check()
+
+        except Exception as exc:
+            log.error("weekly_concept_drift_check_failed", error=str(exc))
+
+    def _quarterly_hpo(self, quarter: str) -> None:
+        """Phase 8: Quarterly hyperparameter optimization."""
+        try:
+            from datetime import datetime, timedelta
+
+            from monitoring.telegram_notifier import TelegramNotifier
+            from signals.training.hyperparameter_optimizer import BayesianHyperparameterOptimizer
+
+            log.info("quarterly_hpo_started", quarter=quarter)
+
+            # Run Bayesian optimization
+            optimizer = BayesianHyperparameterOptimizer(n_trials=20, warm_start=True)
+
+            # Use last 2 years of data for HPO
+            import pandas as pd
+
+            from data.store import get_engine
+            from signals.features import FEATURE_COLUMNS
+
+            engine = get_engine()
+            now = datetime.utcnow()
+            start_date = now - timedelta(days=730)
+
+            df = pd.read_sql(
+                "SELECT * FROM ohlcv WHERE time >= :start_date ORDER BY time",
+                engine,
+                params={"start_date": start_date},
+                parse_dates=["time"],
+                index_col="time",
+            )
+
+            if len(df) < 1000:
+                log.warning("quarterly_hpo_skipped_insufficient_data")
+                return
+
+            _, history = optimizer.optimize(
+                X=df[FEATURE_COLUMNS],
+                y=df.get("label", pd.Series([0] * len(df))),
+            )
+
+            log.info(
+                "quarterly_hpo_complete",
+                quarter=quarter,
+                best_score=history[-1]["score"],
+                n_trials=len(history),
+            )
+
+            notifier = TelegramNotifier()
+            notifier.send_message(
+                f"📊 {quarter} Hyperparameter Optimization Complete\n"
+                f"Best Score: {history[-1]['score']:.4f}\n"
+                f"Trials: {len(history)}\n"
+                f"New hyperparameters available in MLflow."
+            )
+
+        except Exception as exc:
+            log.error("quarterly_hpo_failed", error=str(exc), quarter=quarter)

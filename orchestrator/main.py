@@ -40,6 +40,7 @@ from execution.broker import get_broker_adapter
 from execution.logger import TradeLogger
 from execution.orders import OrderExecutor
 from monitoring.health import HealthMonitor
+from orchestrator.feature_engineer import FeatureEngineer
 from risk.breakers import CircuitBreaker
 from risk.monitor import PortfolioMonitor
 from risk.sizer import PositionSizer
@@ -49,6 +50,7 @@ from signals.model import ModelRegistry, SignalModel
 from signals.registry import StrategyRegistry
 from signals.scanner_engine import ScannerEngine
 from signals.signal_router import normalize_strategy_result
+from signals.training.ensemble_models import EnsembleStrategy
 
 log = structlog.get_logger(__name__)
 
@@ -180,10 +182,20 @@ class TradingSystem:
         self._challenger_model: SignalModel | None = None
         self._crypto_model: SignalModel | None = None
 
-        # A/B routing — challenger model loaded lazily on first use
+        # A/B testing orchestrator — champion vs. challenger comparison
+        from orchestrator.ab_tester import ABTestOrchestrator
+        from orchestrator.model_registry import ModelRegistry as ABModelRegistry
+
+        self._ab_tester = ABTestOrchestrator(registry=ABModelRegistry())
+
+        # Legacy A/B routing — challenger model loaded lazily on first use
         from orchestrator.ab_router import SignalRouter
 
         self._ab_router = SignalRouter(challenger_pct=settings.ab_test_pct)
+
+        # Phase 8: Feature engineering and ensemble models
+        self._feature_engineer = FeatureEngineer()
+        self._ensemble_model: EnsembleStrategy | None = None
 
         # Sentiment — equity only (crypto uses sources_crypto separately)
         self._sentiment = None
@@ -293,6 +305,9 @@ class TradingSystem:
 
         # 5. Load latest ML model from MLflow
         self._load_model()
+
+        # 5a. Phase 8: Load champion and challenger ensemble models (if A/B testing enabled)
+        self._load_ensemble_models()
 
         # 6. Reset daily circuit breaker
         capital = self._broker.get_balance() or settings.initial_capital
@@ -984,6 +999,32 @@ class TradingSystem:
             except Exception as exc:
                 log.warning("crypto_model_load_failed", error=str(exc))
                 self._crypto_model = None
+
+    def _load_ensemble_models(self) -> None:
+        """Phase 8: Load champion and challenger ensemble models for A/B testing."""
+        try:
+            if not settings.ab_test_enabled:
+                log.info("ensemble_loading_skipped_ab_test_disabled")
+                return
+
+            # Try to load champion ensemble from model registry
+            try:
+                champion = self._ab_tester._registry.get_champion()
+                if champion:
+                    log.info("ensemble_champion_loaded", version=champion.get("version"))
+            except Exception as exc:
+                log.warning("ensemble_champion_load_failed", error=str(exc))
+
+            # Try to load challenger ensemble from model registry
+            try:
+                challenger = self._ab_tester._registry.get_challenger()
+                if challenger:
+                    log.info("ensemble_challenger_loaded", version=challenger.get("version"))
+            except Exception as exc:
+                log.warning("ensemble_challenger_load_failed", error=str(exc))
+
+        except Exception as exc:
+            log.error("ensemble_loading_failed", error=str(exc))
 
     def _fetch_equity_features(self) -> dict[str, pd.DataFrame]:
         from datetime import timedelta

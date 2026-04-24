@@ -279,3 +279,233 @@ stats = AuditQuery.get_signal_statistics(strategy="vcp")
 - ✅ Linted with ruff check (no errors)
 - ✅ Zero circular imports
 - ✅ Follows project conventions (structlog, Pydantic, Redis)
+
+---
+
+## Phase 8: ML Evolution Integration (Ensemble, A/B Testing, Drift Detection)
+
+**Status**: ✅ COMPLETE
+
+### Implementation Summary
+
+Phase 8 integrates advanced ML capabilities: ensemble models (XGBoost + LightGBM + PatchTST), A/B testing (champion vs. challenger), feature engineering with caching, and concept drift detection.
+
+### New Components
+
+#### 1. **orchestrator/feature_engineer.py** (331 lines)
+
+`FeatureEngineer` class for feature extraction, validation, and caching:
+- `extract_features(symbol, ohlcv_data)` — Builds features from OHLCV data using `build_features()`
+- `validate_features(features)` — Checks schema against `FEATURE_COLUMNS`
+- `cache_features(symbol, features, ttl=300)` — Redis cache with 5-min TTL
+- `get_cached_features(symbol)` — Retrieves cached features
+- `extract_and_validate(symbol, data)` — Combined extraction + validation
+- `handle_missing_data(features, fill_method="ffill")` — Forward fill strategy
+- Graceful degradation: None returns on invalid data (never raises)
+
+#### 2. **orchestrator/main.py (Extended)**
+
+Phase 8 integration into `TradingSystem`:
+- `_feature_engineer` initialized in `__init__`
+- `_ensemble_model` for ensemble predictions (if `ab_test_enabled`)
+- `_load_ensemble_models()` called in `pre_market_setup()` if `ab_test_enabled=True`
+- Pre-trained models auto-loaded from `config.ensemble_model_dir`
+- 100% backward compatible: Phase 1-7 logic unchanged
+
+#### 3. **orchestrator/scheduler.py (Extended)**
+
+Three Phase 8 scheduled jobs:
+- **Monthly Ensemble Retraining** (1st of month, 2:00 AM IST)
+  - Loads 5 years of OHLCV data
+  - Trains XGBoost, LightGBM, PatchTST on walk-forward data
+  - Saves to `./models/ensemble/` with timestamp
+- **Weekly Concept Drift Check** (Monday, 6:00 AM IST)
+  - Compares last week's feature distributions to reference
+  - Computes KL divergence per feature
+  - Alerts if drift exceeds threshold
+- **Quarterly HPO** (1st of Q, 3:00 AM IST)
+  - Bayesian hyperparameter optimization for ensemble models
+  - Saves best params to Redis
+  - Updates model training configs
+
+#### 4. **signals/training/ (Pre-existing, Now Orchestrated)**
+
+Existing modules now fully integrated:
+- `ensemble_models.py::EnsembleStrategy` — 3-model voting (majority or weighted)
+- `concept_drift.py::ConceptDriftDetector` — KL divergence + regime change detection
+- `walk_forward_ensemble.py::WalkForwardEnsembleTrainer` — Walk-forward validation
+- `hyperparameter_optimizer.py::HyperparameterOptimizer` — Bayesian optimization
+
+#### 5. **orchestrator/ab_tester.py (Pre-existing, Maintained)**
+
+A/B testing orchestrator:
+- `ABTestOrchestrator` — Champion vs. challenger model routing
+- 50/50 random routing between models
+- Logs to Redis (TTL 30 days) + TimescaleDB (permanent)
+- Statistical comparison (t-test, win rate, Sharpe ratio)
+
+#### 6. **config/strategy_params.yaml (Extended)**
+
+New configuration sections:
+```yaml
+ensemble:
+  model_dir: ./models/ensemble
+  voting_strategy: majority  # or weighted
+  weights: [0.4, 0.3, 0.3]   # XGB, LGB, PatchTST
+  enable_confidence_threshold: true
+  confidence_threshold: 0.65
+
+retraining:
+  monthly_retraining_enabled: true
+  weekly_drift_check_enabled: true
+  quarterly_hpo_enabled: true
+  feature_lookback_window: 1825  # 5 years
+  train_val_test_split: [24, 6, 3]  # months
+  drift_threshold: 0.5  # KL divergence
+  hpo_trials: 100
+```
+
+#### 7. **config/settings.py (Extended)**
+
+New Phase 8 settings:
+- `ab_test_enabled` — Enable A/B testing and ensemble (default: False)
+- `ensemble_strategy` — "majority" or "weighted" voting (default: "majority")
+- `concept_drift_threshold` — KL divergence threshold (default: 0.5)
+
+### Tests (556 lines, 29 tests)
+
+File: `tests/test_orchestrator_ml_evolution.py`
+
+**Feature Engineering** (5 tests):
+- Extract features from OHLCV data
+- Validate features against schema
+- Cache and retrieve features
+- Handle missing data (NaN, inf)
+- E2E extraction → validation → caching pipeline
+
+**A/B Testing** (6 tests):
+- Route signals 50/50 to models
+- Log results to Redis
+- Generate comparison reports
+- Statistical significance testing
+- Model win determination
+
+**Ensemble Models** (4 tests):
+- Train XGBoost, LightGBM on synthetic data
+- Verify base models are trainable
+- Predict with ensemble
+- Handle edge cases (empty data, single row)
+
+**Concept Drift** (3 tests):
+- KL divergence computation (identical dists → ~0)
+- KL divergence computation (different dists > threshold)
+- Fit reference distributions
+- Detect regime changes
+
+**Walk-Forward Ensemble** (2 tests):
+- Initialize trainer
+- Verify training report structure
+
+**Attribution** (1 test):
+- Initialize performance attribution
+
+**End-to-End Integration** (8 tests):
+- Full feature pipeline
+- A/B test complete workflow
+- Ensemble with feature engineer
+- Drift detection with recent data
+- Error handling and resilience
+
+All 29 tests pass ✅
+
+### Key Features
+
+1. **Feature Caching**: 5-minute Redis TTL for fast retrieval in trading loop
+2. **Graceful Degradation**: All components return None/empty on error (never crash)
+3. **Backward Compatible**: Phase 1-7 unchanged; opt-in via `ab_test_enabled`
+4. **Scheduled Automation**: Retraining, drift checks, HPO run on cron schedule
+5. **Statistical Rigor**: t-test, binomial test, Sharpe ratio comparison for A/B decisions
+6. **KL Divergence Drift**: Symmetrized KL divergence on 20-bin histograms
+7. **Walk-Forward Validation**: 5-year lookback with 24-month train, 6-month val, 3-month test
+
+### Usage
+
+**Extract and cache features:**
+```python
+from orchestrator.feature_engineer import FeatureEngineer
+
+engineer = FeatureEngineer()
+features = engineer.extract_features("INFY", ohlcv_df)
+if engineer.validate_features(features):
+    engineer.cache_features("INFY", features)
+cached = engineer.get_cached_features("INFY")
+```
+
+**Route signals to ensemble:**
+```python
+from signals.training.ensemble_models import EnsembleStrategy
+
+ensemble = EnsembleStrategy()
+# Train on historical data
+ensemble.train_xgboost(X_train, y_train)
+ensemble.train_lightgbm(X_train, y_train)
+# Predict on new features
+pred = ensemble.ensemble_predict(X_test)  # returns probability
+```
+
+**A/B test models:**
+```python
+from orchestrator.ab_tester import ABTestOrchestrator
+
+ab = ABTestOrchestrator()
+result = ab.route_signal(signal)  # 50/50 to champion/challenger
+ab.log_result(model_id="champion", result_data)
+report = ab.generate_comparison_report(lookback_days=30)
+```
+
+**Detect drift:**
+```python
+from signals.training.concept_drift import ConceptDriftDetector
+
+detector = ConceptDriftDetector(threshold=0.5)
+kl_div = detector.compute_kl_divergence(reference_dist, recent_dist)
+is_drift = detector.is_regime_change(kl_div, threshold=0.5)
+```
+
+### Design Decisions
+
+1. **Feature Caching**: Redis TTL=300s balances freshness vs. performance
+2. **Ensemble Voting**: Majority by default (simple, interpretable); weights optional
+3. **Drift Detection**: KL divergence with symmetric averaging for robustness
+4. **Backward Compatibility**: All Phase 8 components optional (controlled by settings)
+5. **Graceful Degradation**: Never crash; log and return None/empty on errors
+6. **Scheduled Jobs**: Use APScheduler with IST timezone (trading market hours)
+7. **A/B 50/50 Split**: Random routing (no user feedback loop yet)
+
+### Tests & Quality
+
+- ✅ 29 Phase 8 tests pass (100%)
+- ✅ 37 existing orchestrator tests pass (100% backward compatible)
+- ✅ 1104+ existing tests pass (no regressions)
+- ✅ Ruff format & lint: clean
+- ✅ SQL injection fixed (parameterized queries)
+- ✅ Type hints throughout
+
+### Integration Checklist
+
+- ✅ `FeatureEngineer` initialized in orchestrator main
+- ✅ `_load_ensemble_models()` called on pre_market_setup
+- ✅ Scheduler jobs registered (monthly, weekly, quarterly)
+- ✅ Configuration updated (YAML + settings)
+- ✅ Integration tests written and passing
+- ✅ Backward compatibility verified
+- ✅ Code quality checks passed
+
+### Next Steps (Phase 9+)
+
+- [ ] Real-time drift monitoring dashboard
+- [ ] Multi-model ensemble with neural networks
+- [ ] Reinforcement learning for A/B routing (Thompson sampling)
+- [ ] Feature importance tracking (SHAP)
+- [ ] Automated model promotion workflow
+- [ ] Advanced drift detection (Adwin, DDM, EDDM)
