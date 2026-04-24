@@ -139,5 +139,5 @@ def test_vcp_pivot_tracking_no_scan():
     assert symbols_in_set == {"RELIANCE", "INFY"}
 
     # Verify pivots exist
-    reliance_pivot = r.get(f"vcp:pivot:RELIANCE")
+    reliance_pivot = r.get("vcp:pivot:RELIANCE")
     assert reliance_pivot is not None
