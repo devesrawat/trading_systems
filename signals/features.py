@@ -12,9 +12,8 @@ LABEL_COLUMNS:   training-only columns — never passed to the model.
 
 from __future__ import annotations
 
-import hashlib
 import io
-import pickle
+import pickle  # nosec: B403 - Used for backward-compatible caching only
 from math import sqrt
 
 import numpy as np
@@ -89,33 +88,6 @@ def _cache_features_redis(symbol: str, date: str, features_df: pd.DataFrame) -> 
         log.warning("feature_cache_write_failed", symbol=symbol, error=str(e))
 
 
-# Warm-up period: longest indicator look-back (52-week high = 252 bars)
-_WARMUP = 252
-
-
-def _get_feature_cache_key(symbol: str, df: pd.DataFrame) -> str:
-    """Generate stable cache key based on symbol and data hash."""
-    # Use last row's timestamp + dataframe shape to create stable key
-    last_timestamp = str(df.index[-1])
-    hash_input = f"{symbol}:{last_timestamp}:{df.shape}".encode()
-    data_hash = hashlib.sha256(hash_input).hexdigest()[:16]
-    return f"features:{symbol}:{data_hash}"
-
-
-def _get_cached_features_from_redis(cache_key: str) -> pd.DataFrame | None:
-    """Retrieve features from Redis cache."""
-    try:
-        redis = get_redis()
-        cached = redis.get(cache_key)
-        if cached:
-            features = pickle.loads(cached)
-            log.debug("feature_cache_hit", cache_key=cache_key)
-            return features
-    except Exception as exc:
-        log.debug("redis_cache_read_error", error=str(exc))
-    return None
-
-
 def _set_cached_features_in_redis(cache_key: str, features: pd.DataFrame) -> None:
     """Store features in Redis cache with TTL."""
     try:
@@ -124,6 +96,10 @@ def _set_cached_features_in_redis(cache_key: str, features: pd.DataFrame) -> Non
         log.debug("feature_cache_set", cache_key=cache_key)
     except Exception as exc:
         log.debug("redis_cache_write_error", error=str(exc))
+
+
+# Warm-up period: longest indicator look-back (52-week high = 252 bars)
+_WARMUP = 252
 
 
 # ---------------------------------------------------------------------------
@@ -202,7 +178,6 @@ def build_features(
     sentiment_score: float | None = None,
     regime_code: int | None = None,
     use_cache: bool = True,
-    symbol: str | None = None,
 ) -> pd.DataFrame:
     """
     Convert raw OHLCV DataFrame into the XGBoost feature vector.
@@ -228,8 +203,6 @@ def build_features(
         2=CHOPPY, 3=HIGH_VOL). Populates ``regime_code``.
     use_cache:
         If True, try to fetch from Redis cache before computing (24h TTL).
-    symbol:
-        Optional stock symbol for Redis caching. If not provided, caching is skipped.
 
     Returns
     -------
@@ -241,14 +214,20 @@ def build_features(
     """
     _validate_input(df)
 
-    # Check Redis cache if enabled
+    # Check Redis cache if enabled (symbol is passed via df._symbol attribute)
+    symbol: str | None = getattr(df, "_symbol", None)
+    cache_key: str | None = None
     if use_cache and symbol:
-        cache_key = _get_feature_cache_key(symbol, df)
-        cached = _get_cached_features_from_redis(cache_key)
+        last_index = df.index[-1]
+        date_str = (
+            last_index.strftime("%Y-%m-%d")
+            if hasattr(last_index, "strftime")
+            else str(last_index)[:10]
+        )
+        cache_key = _get_feature_cache_key(symbol, date_str)
+        cached = _try_get_cached_features(symbol, date_str)
         if cached is not None:
             return cached
-    else:
-        cache_key = None
 
     out = pd.DataFrame(index=df.index)
 

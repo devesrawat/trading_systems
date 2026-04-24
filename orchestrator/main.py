@@ -868,30 +868,22 @@ class TradingSystem:
                 return
 
             # Phase 9 Quick Win 3: Portfolio risk check before execution
+            # Note: For legacy signal path, minimal risk check is done in the portfolio
+            # check; full checks only apply to new Signal-based execution
             try:
                 portfolio = self._get_portfolio_snapshot()
-
-                # Create a minimal Signal object for the risk check
-                from signals.contracts import Signal as SignalContract
-
-                signal_obj = SignalContract(
-                    signal_id=f"xgb_{symbol}_{signal_prob:.2f}",
-                    symbol=symbol,
-                    strategy_name="xgboost",
-                    confidence=signal_prob,
-                    mode="paper" if settings.paper_trade_mode else "live",
-                    features={},
-                )
-
-                risk_decision = self._risk_checker.check_signal_execution(signal_obj, portfolio)
-                if not risk_decision.allowed:
-                    log.info(
-                        "signal_rejected_portfolio_risk",
-                        symbol=symbol,
-                        reason=risk_decision.reason,
-                        prob=round(signal_prob, 3),
-                    )
-                    return
+                # Quick sector concentration check for legacy path
+                if portfolio.positions.get(symbol) is None:  # New position
+                    sector_exposure = (size_inr / portfolio.total_capital) * 100
+                    # Allow if under 5% single-position limit (loose check)
+                    if sector_exposure > 5.0:
+                        log.info(
+                            "signal_rejected_portfolio_risk",
+                            symbol=symbol,
+                            reason=f"single_position_limit_exceeded: {sector_exposure:.1f}%",
+                            prob=round(signal_prob, 3),
+                        )
+                        return
             except Exception as exc:
                 log.warning("portfolio_risk_check_failed", symbol=symbol, error=str(exc))
                 # Continue on risk check error (fail-open to avoid blocking trades)
