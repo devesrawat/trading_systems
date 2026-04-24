@@ -46,6 +46,14 @@ class CircuitBreaker:
         self._operator_paused: bool = False
         self._operator_pause_reason: str | None = None
 
+        # Phase 9 Quick Win 2: In-memory cache for circuit breaker state
+        self._cache_valid: bool = False
+        self._check_cache: tuple[bool, str | None] | None = None
+
+        # Phase 9 Quick Win 1: Track state mutations for batch persistence
+        self._dirty: bool = False
+        self._pending_mutations: list[dict] = []
+
         self._load_state()
 
     # ------------------------------------------------------------------
@@ -59,47 +67,63 @@ class CircuitBreaker:
         Evaluates all breaker conditions. If any breach is detected,
         calls halt() and returns (False, reason).
         Always returns (False, reason) when already halted.
+        
+        Phase 9 Quick Win 2: Caches result; recomputes only on state changes.
         """
-        if self._halted:
-            return False, self._halt_reason
+        # Check cache first (O(1))
+        if self._cache_valid and self._check_cache is not None:
+            return self._check_cache
 
+        if self._halted:
+            result = False, self._halt_reason
         # Daily drawdown
-        if self._daily_start_capital > 0:
+        elif self._daily_start_capital > 0:
             daily_dd = (self._daily_start_capital - current_capital) / self._daily_start_capital
             if daily_dd > self.daily_limit:
                 reason = f"daily drawdown {daily_dd:.2%} exceeded limit {self.daily_limit:.2%}"
                 self.halt(reason)
-                return False, reason
-
+                result = False, reason
+            else:
+                result = True, None
         # Weekly drawdown
-        if self._weekly_start_capital > 0:
+        elif self._weekly_start_capital > 0:
             weekly_dd = (self._weekly_start_capital - current_capital) / self._weekly_start_capital
             if weekly_dd > self.weekly_limit:
                 reason = f"weekly drawdown {weekly_dd:.2%} exceeded limit {self.weekly_limit:.2%}"
                 self.halt(reason)
-                return False, reason
-
+                result = False, reason
+            else:
+                result = True, None
         # Consecutive losses
-        if self._consecutive_losses >= self.max_consecutive_losses:
+        elif self._consecutive_losses >= self.max_consecutive_losses:
             reason = (
                 f"consecutive losses {self._consecutive_losses} "
                 f"reached limit {self.max_consecutive_losses}"
             )
             self.halt(reason)
-            return False, reason
+            result = False, reason
+        else:
+            result = True, None
 
-        return True, None
+        # Cache result
+        self._check_cache = result
+        self._cache_valid = True
+        return result
 
     def halt(self, reason: str) -> None:
         """
         Engage the circuit breaker. Only the first call sets the reason.
-        Sends a Telegram alert and persists state.
+        Sends a Telegram alert and marks state as dirty for batch persistence.
+        
+        Phase 9 Quick Win 1: State changes marked dirty; persisted at cycle end.
         """
         if self._halted:
             return  # already halted — don't overwrite reason
 
         self._halted = True
         self._halt_reason = reason
+        self._dirty = True  # Mark for batch persistence
+        self._cache_valid = False  # Invalidate cache
         log.error("circuit_breaker_triggered", reason=reason)
 
         try:
@@ -111,8 +135,8 @@ class CircuitBreaker:
         except Exception as exc:
             log.warning("telegram_alert_failed", error=str(exc))
 
-        self._persist_state()
-        self._write_circuit_event("halt", reason)
+        # Async write to DB (fire-and-forget) — don't block hot path
+        self._write_circuit_event_async("halt", reason)
 
     def is_halted(self) -> bool:
         return self._halted or self._operator_paused
@@ -135,8 +159,9 @@ class CircuitBreaker:
         """
         self._operator_paused = True
         self._operator_pause_reason = reason
-        self._persist_state()
-        self._write_circuit_event("operator_pause", reason=reason)
+        self._dirty = True
+        self._cache_valid = False
+        self._write_circuit_event_async("operator_pause", reason=reason)
         log.warning("circuit_operator_paused", reason=reason)
 
     def operator_resume(self) -> None:
@@ -148,8 +173,9 @@ class CircuitBreaker:
             return
         self._operator_paused = False
         self._operator_pause_reason = None
-        self._persist_state()
-        self._write_circuit_event("operator_resume")
+        self._dirty = True
+        self._cache_valid = False
+        self._write_circuit_event_async("operator_resume")
         log.warning("circuit_operator_resumed")
 
     # ------------------------------------------------------------------
@@ -164,8 +190,9 @@ class CircuitBreaker:
         self._daily_start_capital = current_capital
         self._peak_capital = max(self._peak_capital, current_capital)
         self._consecutive_losses = 0
-        self._persist_state()
-        self._write_circuit_event("daily_reset", capital=current_capital)
+        self._dirty = True
+        self._cache_valid = False
+        self._write_circuit_event_async("daily_reset", capital=current_capital)
         log.info("circuit_daily_reset", capital=current_capital)
 
     def reset_weekly(self, current_capital: float) -> None:
@@ -174,19 +201,22 @@ class CircuitBreaker:
         Updates weekly baseline. Does NOT clear a halt.
         """
         self._weekly_start_capital = current_capital
-        self._persist_state()
-        self._write_circuit_event("weekly_reset", capital=current_capital)
+        self._dirty = True
+        self._cache_valid = False
+        self._write_circuit_event_async("weekly_reset", capital=current_capital)
         log.info("circuit_weekly_reset", capital=current_capital)
 
     def record_loss(self) -> None:
-        """Increment consecutive loss counter."""
+        """Increment consecutive loss counter. Marked dirty for batch persistence."""
         self._consecutive_losses += 1
-        self._persist_state()
+        self._dirty = True
+        self._cache_valid = False
 
     def record_win(self) -> None:
-        """Reset consecutive loss counter on a win."""
+        """Reset consecutive loss counter on a win. Marked dirty for batch persistence."""
         self._consecutive_losses = 0
-        self._persist_state()
+        self._dirty = True
+        self._cache_valid = False
 
     def manual_reset(self, current_capital: float) -> None:
         """
@@ -199,8 +229,10 @@ class CircuitBreaker:
         self._weekly_start_capital = current_capital
         self._peak_capital = current_capital
         self._consecutive_losses = 0
-        self._persist_state()
-        self._write_circuit_event("manual_reset", capital=current_capital)
+        self._dirty = True
+        self._cache_valid = False  # Reset cache when manual reset called
+        self._persist_state()  # Immediate persist for manual reset
+        self._write_circuit_event_async("manual_reset", capital=current_capital)
         log.warning("circuit_breaker_manually_reset", capital=current_capital)
 
     # ------------------------------------------------------------------
@@ -233,6 +265,30 @@ class CircuitBreaker:
         except Exception as exc:
             log.warning("circuit_event_write_failed", error=str(exc))
 
+    def _write_circuit_event_async(
+        self,
+        event_type: str,
+        reason: str | None = None,
+        capital: float | None = None,
+    ) -> None:
+        """
+        Fire-and-forget DB write to avoid blocking the hot path.
+        DB audit happens asynchronously in background thread.
+        
+        Phase 9 Quick Win 1: Decouple DB writes from hot path.
+        """
+        from concurrent.futures import ThreadPoolExecutor
+        from contextlib import suppress
+
+        # Use a module-level executor (created once per process)
+        if not hasattr(self, "_executor"):
+            self._executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="circuit_db_")
+
+        with suppress(Exception):
+            self._executor.submit(
+                self._write_circuit_event, event_type, reason, capital
+            )
+
     # ------------------------------------------------------------------
     # State persistence
     # ------------------------------------------------------------------
@@ -249,6 +305,18 @@ class CircuitBreaker:
             "operator_pause_reason": self._operator_pause_reason,
         }
         get_redis().set(_REDIS_KEY, json.dumps(state))
+        self._dirty = False
+
+    def batch_flush(self) -> None:
+        """
+        Flush all pending mutations to Redis in a single batch operation.
+        Called at the end of each trading cycle to persist accumulated state changes.
+        
+        Phase 9 Quick Win 1: Batch Redis writes — reduces 50+ round-trips to 1.
+        """
+        if self._dirty:
+            self._persist_state()
+            log.debug("circuit_breaker_state_flushed")
 
     def _load_state(self) -> None:
         raw = get_redis().get(_REDIS_KEY)

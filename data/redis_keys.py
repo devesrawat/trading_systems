@@ -110,6 +110,15 @@ class RedisKeys:
     DRIFT_REFERENCE: str = "trading:ml:drift_reference"
 
     # ------------------------------------------------------------------
+    # ML feature cache  (TTL: 24h — signals/features.py)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def ml_features(symbol: str, date: str) -> str:
+        """``trading:ml:features:{symbol}:{date}`` — cached feature vectors."""
+        return f"trading:ml:features:{symbol}:{date}"
+
+    # ------------------------------------------------------------------
     # Audit trail  (TTL: 30 days — audit/persistence.py)
     # ------------------------------------------------------------------
 

@@ -1,0 +1,483 @@
+# Feature Registry — Comprehensive feature definitions
+#
+# All features used in signal generation, training, and backtesting.
+# FEATURE_COLUMNS (model input) are marked with production=true.
+# Auxiliary features (Phase 1) marked with auxiliary=true.
+#
+# format: name, category, source, lookback, update_freq, type, importance, description
+
+features:
+  # ========================================================================
+  # CORE INDICATORS — Momentum & Trend (9 features)
+  # ========================================================================
+
+  rsi_14:
+    category: core_indicators
+    source: core_indicators.compute_rsi
+    lookback_period: 14
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "Relative Strength Index (14-period), bounded [0, 100]"
+
+  rsi_7:
+    category: core_indicators
+    source: core_indicators.compute_rsi
+    lookback_period: 7
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "Relative Strength Index (7-period), shorter-term momentum"
+
+  macd:
+    category: core_indicators
+    source: core_indicators.compute_macd
+    lookback_period: 26
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "MACD line (12-26-9), unbounded"
+
+  macd_signal:
+    category: core_indicators
+    source: core_indicators.compute_macd
+    lookback_period: 26
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "MACD signal line (9-period EMA of MACD)"
+
+  macd_hist:
+    category: core_indicators
+    source: core_indicators.compute_macd
+    lookback_period: 26
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "MACD histogram (MACD - signal line)"
+
+  macd_cross:
+    category: core_indicators
+    source: core_indicators.compute_macd_cross
+    lookback_period: 26
+    update_frequency: daily
+    type: categorical
+    importance_weight: 1.0
+    production: true
+    description: "MACD crossover signal: +1 (bullish), 0 (neutral), -1 (bearish)"
+
+  mom_10:
+    category: core_indicators
+    source: core_indicators.compute_momentum
+    lookback_period: 10
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Momentum (close - close[10 bars ago])"
+
+  roc_5:
+    category: core_indicators
+    source: core_indicators.compute_roc
+    lookback_period: 5
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Rate of Change (5-period), % change"
+
+  roc_21:
+    category: core_indicators
+    source: core_indicators.compute_roc
+    lookback_period: 21
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Rate of Change (21-period, monthly)"
+
+  # ========================================================================
+  # VOLATILITY — ATR, Bollinger, Realized Vol (8 features)
+  # ========================================================================
+
+  atr_14:
+    category: volatility
+    source: volatility.compute_atr
+    lookback_period: 14
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "Average True Range (14-period), in price units"
+
+  atr_pct:
+    category: volatility
+    source: volatility.compute_atr_pct
+    lookback_period: 14
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "ATR as % of close price"
+
+  bb_upper:
+    category: volatility
+    source: volatility.compute_bollinger_bands
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Bollinger Bands upper (20-period, 2 std dev)"
+
+  bb_mid:
+    category: volatility
+    source: volatility.compute_bollinger_bands
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Bollinger Bands middle (20-period SMA)"
+
+  bb_lower:
+    category: volatility
+    source: volatility.compute_bollinger_bands
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Bollinger Bands lower (20-period, 2 std dev)"
+
+  bb_position:
+    category: volatility
+    source: volatility.compute_bollinger_bands
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: true
+    description: "Close position within BB: (C-L)/(U-L), ideally [0,1]"
+
+  realized_vol_10:
+    category: volatility
+    source: volatility.compute_realized_volatility
+    lookback_period: 10
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "10-period realized volatility (annualized)"
+
+  realized_vol_20:
+    category: volatility
+    source: volatility.compute_realized_volatility
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 1.0
+    production: true
+    description: "20-period realized volatility (annualized)"
+
+  # ========================================================================
+  # VOLUME & TREND — EMA, OBV, VWAP (12 features)
+  # ========================================================================
+
+  volume_zscore_20:
+    category: volume
+    source: build_features (inline)
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Volume z-score normalized to mean/std over 20 bars"
+
+  obv:
+    category: volume
+    source: build_features (pandas_ta.obv)
+    lookback_period: unlimited
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: true
+    description: "On-Balance Volume, cumulative buy/sell pressure"
+
+  obv_slope:
+    category: volume
+    source: build_features (inline)
+    lookback_period: 5
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.6
+    production: true
+    description: "OBV momentum (5-bar change / 5)"
+
+  vwap_dev:
+    category: volume
+    source: build_features (inline)
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Price deviation from 20-bar rolling VWAP, as %"
+
+  ema_9:
+    category: trend
+    source: build_features (pandas_ta.ema)
+    lookback_period: 9
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Exponential Moving Average (9-period, fast)"
+
+  ema_21:
+    category: trend
+    source: build_features (pandas_ta.ema)
+    lookback_period: 21
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Exponential Moving Average (21-period)"
+
+  ema_50:
+    category: trend
+    source: build_features (pandas_ta.ema)
+    lookback_period: 50
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Exponential Moving Average (50-period, slow)"
+
+  ema_cross_9_21:
+    category: trend
+    source: build_features (inline)
+    lookback_period: 21
+    update_frequency: daily
+    type: categorical
+    importance_weight: 0.8
+    production: true
+    description: "EMA 9/21 crossover: +1 bullish, -1 bearish, 0 neutral"
+
+  price_vs_ema50:
+    category: trend
+    source: build_features (inline)
+    lookback_period: 50
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Price deviation from 50-period EMA, as %"
+
+  adx_14:
+    category: trend
+    source: build_features (pandas_ta.adx)
+    lookback_period: 14
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Average Directional Index (14-period), trend strength [0,100]"
+
+  di_plus:
+    category: trend
+    source: build_features (pandas_ta.adx)
+    lookback_period: 14
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Positive Directional Indicator (+DI), part of ADX"
+
+  di_minus:
+    category: trend
+    source: build_features (pandas_ta.adx)
+    lookback_period: 14
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: true
+    description: "Negative Directional Indicator (-DI), part of ADX"
+
+  # ========================================================================
+  # MEAN REVERSION (5 features)
+  # ========================================================================
+
+  zscore_20:
+    category: mean_reversion
+    source: build_features (inline)
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.9
+    production: true
+    description: "Price z-score from 20-period SMA"
+
+  distance_from_52w_high:
+    category: mean_reversion
+    source: build_features (inline)
+    lookback_period: 252
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: true
+    description: "% distance from 52-week high, always <= 0"
+
+  distance_from_52w_low:
+    category: mean_reversion
+    source: build_features (inline)
+    lookback_period: 252
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: true
+    description: "% distance from 52-week low, always >= 0"
+
+  # ========================================================================
+  # REGIME (1 feature)
+  # ========================================================================
+
+  vol_regime:
+    category: regime
+    source: build_features (inline)
+    lookback_period: 60
+    update_frequency: daily
+    type: categorical
+    importance_weight: 0.7
+    production: true
+    description: "Volatility regime: 1 if vol > 60-day median, 0 otherwise"
+
+  # ========================================================================
+  # AUXILIARY FEATURES — Phase 1 (4 features, not yet in FEATURE_COLUMNS)
+  # ========================================================================
+
+  fii_net_cash_norm:
+    category: flow
+    source: flow.compute_fii_net_cash_normalized
+    lookback_period: daily
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.8
+    production: false
+    auxiliary: true
+    description: "FII net cash flow normalized (INR crore / 1e5)"
+
+  india_vix:
+    category: volatility
+    source: external_data_feed
+    lookback_period: daily
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: false
+    auxiliary: true
+    description: "India VIX level (market volatility index)"
+
+  sentiment_score:
+    category: sentiment
+    source: sentiment.compute_finbert_sentiment_series
+    lookback_period: daily
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.6
+    production: false
+    auxiliary: true
+    description: "FinBERT sentiment for symbol, cached daily [-1, 1]"
+
+  regime_code:
+    category: regime
+    source: regime.RegimeState (ordinal)
+    lookback_period: daily
+    update_frequency: daily
+    type: categorical
+    importance_weight: 0.7
+    production: false
+    auxiliary: true
+    description: "Regime classification: 0=trending_bull, 1=trending_bear, 2=choppy, 3=high_vol"
+
+  # ========================================================================
+  # FUTURE FEATURES — Not yet implemented (for reference)
+  # ========================================================================
+
+  parkinson_vol:
+    category: volatility
+    source: volatility.compute_parkinson_volatility
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: false
+    future: true
+    description: "High-low range volatility estimator"
+
+  garman_klass_vol:
+    category: volatility
+    source: volatility.compute_garman_klass_volatility
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.7
+    production: false
+    future: true
+    description: "OHLC-based volatility estimator"
+
+  correlation_to_nifty:
+    category: advanced
+    source: advanced.compute_correlation_to_benchmark
+    lookback_period: 50
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.6
+    production: false
+    future: true
+    description: "Rolling correlation to Nifty 50 index"
+
+  sector_relative_strength:
+    category: advanced
+    source: advanced.compute_sector_relative_strength
+    lookback_period: 20
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.5
+    production: false
+    future: true
+    description: "Relative strength vs. sector average"
+
+  price_acceleration:
+    category: advanced
+    source: advanced.compute_price_acceleration
+    lookback_period: 5
+    update_frequency: daily
+    type: continuous
+    importance_weight: 0.5
+    production: false
+    future: true
+    description: "Second derivative of price (momentum of momentum)"
+
+# ============================================================================
+# METADATA
+# ============================================================================
+
+metadata:
+  total_production_features: 33
+  total_auxiliary_features: 4
+  total_future_features: 5
+  last_updated: "2025-01-01"
+  version: "1.0"
+  notes: |
+    Production features (production=true) are the exact columns in FEATURE_COLUMNS.
+    Order must never change — XGBoost model depends on it.
+
+    Auxiliary features (auxiliary=true) are maintained separately pending model retraining.
+
+    Future features are placeholders for experimental indicators not yet in use.

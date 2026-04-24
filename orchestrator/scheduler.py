@@ -24,7 +24,7 @@ but never crashes the scheduler process.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -50,6 +50,10 @@ class TradingScheduler:
         self._system = system
         self._market_type = market_type.lower()
         self._scheduler = BackgroundScheduler(timezone=_TZ_IST)
+
+        # QUICK WIN 3: Track job failures for consecutive failure alerts
+        self._job_failures: dict[str, list[float]] = {}  # job_name -> [failure_timestamps]
+        self._job_last_start: dict[str, float] = {}  # job_name -> start_time
 
     def start(self) -> None:
         """Register all jobs for the active market_type and start the scheduler."""
@@ -271,23 +275,83 @@ class TradingScheduler:
     # Internal
     # ------------------------------------------------------------------
 
-    def _safe(self, fn):
-        """Wrap a job function so exceptions alert Telegram but never crash."""
+    def _safe(self, fn: Any) -> Any:
+        """
+        Wrap a job function with execution tracking and failure alerting.
 
-        def wrapper(*args, **kwargs):
+        QUICK WIN 3: Enhanced with:
+        - Start/end time tracking (visibility into job duration)
+        - Consecutive failure detection (alert on 2+ consecutive failures)
+        - Detailed error logging with duration
+        - Telegram alerting with retry guidance
+        """
+        import time
+
+        def wrapper(*args: Any, **kwargs: Any) -> None:
+            job_name = getattr(fn, "__name__", "unknown")
+            start_time = time.time()
+
+            # Initialize failure tracking for this job if not exists
+            if job_name not in self._job_failures:
+                self._job_failures[job_name] = []
+
+            self._job_last_start[job_name] = start_time
+
             try:
                 fn(*args, **kwargs)
-            except Exception as exc:
-                log.error("scheduler_job_failed", job=fn.__name__, error=str(exc))
-                try:
-                    from monitoring.alerts import TelegramAlerter
+                elapsed = time.time() - start_time
 
-                    TelegramAlerter().alert_system_error(
-                        module=fn.__name__,
-                        error_msg=str(exc),
+                # Log successful execution with duration
+                log.info(
+                    "scheduler_job_executed",
+                    job=job_name,
+                    duration_sec=round(elapsed, 2),
+                )
+
+                # Clear failure history on success
+                self._job_failures[job_name] = []
+
+            except Exception as exc:
+                elapsed = time.time() - start_time
+
+                # Record failure timestamp
+                self._job_failures[job_name].append(start_time)
+
+                # Clean up failures older than 1 hour
+                one_hour_ago = start_time - 3600
+                self._job_failures[job_name] = [
+                    ts for ts in self._job_failures[job_name] if ts > one_hour_ago
+                ]
+
+                # Determine if this is consecutive failure
+                consecutive_failures = len(self._job_failures[job_name])
+
+                log.error(
+                    "scheduler_job_failed",
+                    job=job_name,
+                    duration_sec=round(elapsed, 2),
+                    error=str(exc),
+                    consecutive_failures=consecutive_failures,
+                )
+
+                # Alert on Telegram if 2+ consecutive failures
+                if consecutive_failures >= 2:
+                    try:
+                        from monitoring.alerts import TelegramAlerter
+
+                        TelegramAlerter().alert_system_error(
+                            module=job_name,
+                            error_msg=f"🚨 Job failed {consecutive_failures} consecutive times: {exc!s} (after {elapsed:.1f}s)",
+                        )
+                    except Exception as tg_err:
+                        log.error("telegram_alerter_failed", error=str(tg_err))
+                else:
+                    # Single failure: log but don't spam Telegram yet
+                    log.warning(
+                        "scheduler_job_single_failure",
+                        job=job_name,
+                        elapsed_sec=round(elapsed, 2),
                     )
-                except Exception:
-                    pass
 
         wrapper.__name__ = getattr(fn, "__name__", "unknown")
         return wrapper

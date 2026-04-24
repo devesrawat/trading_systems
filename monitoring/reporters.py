@@ -3,6 +3,8 @@ Phase 6: Daily, weekly, and monthly reporting.
 
 Reporters aggregate trading metrics, portfolio state, and system health
 to produce human-readable summaries for review and dashboarding.
+
+Phase 8: Attribution and feature analysis integration.
 """
 
 from __future__ import annotations
@@ -395,5 +397,118 @@ class SystemHealthReport:
             f"  Cache hit rate: {snapshot.cache_hit_rate:.1%}",
             f"  Error rate: {snapshot.error_rate:.2%}",
         ]
+
+        return "\n".join(lines)
+
+
+class AttributionReport:
+    """Produces a performance attribution and feature analysis report."""
+
+    @staticmethod
+    def generate(
+        attribution: dict[str, Any],
+        date_range: tuple[str, str] | None = None,
+    ) -> str:
+        """
+        Generate a formatted attribution report.
+
+        Parameters
+        ----------
+        attribution : dict
+            Attribution metrics (from PerformanceAttribution.generate_attribution_report)
+        date_range : tuple[str, str], optional
+            (start_date, end_date) for report header
+
+        Returns
+        -------
+        str
+            Formatted report text
+        """
+        lines = []
+
+        if date_range:
+            lines.append(f"🔍 ATTRIBUTION REPORT — {date_range[0]} to {date_range[1]}")
+        else:
+            lines.append("🔍 ATTRIBUTION REPORT")
+
+        lines.extend(
+            [
+                "",
+                "Summary:",
+                f"  Total trades: {attribution.get('total_trades', 0)}",
+                f"  P&L: {attribution.get('total_pnl', 0):+.2f}",
+                f"  Win rate: {attribution.get('win_rate', 0):.1%}",
+                f"  Wins/Losses: {attribution.get('win_count', 0)}W / {attribution.get('loss_count', 0)}L",
+                "",
+                "Top Features by SHAP Importance:",
+            ]
+        )
+
+        top_features = attribution.get("top_features_by_shap", [])
+        if top_features:
+            for i, (feature, importance) in enumerate(top_features[:10], 1):
+                lines.append(f"  {i}. {feature}: {importance:.4f}")
+        else:
+            lines.append("  (no feature importance data)")
+
+        lines.append("")
+        lines.append("Strategy Contribution:")
+
+        strategy_contrib = attribution.get("strategy_contribution", {})
+        if strategy_contrib:
+            for strategy, metrics in sorted(
+                strategy_contrib.items(), key=lambda x: -x[1].get("pnl", 0)
+            )[:5]:
+                pnl = metrics.get("pnl", 0)
+                trades = metrics.get("trades", 0)
+                wr = metrics.get("win_rate", 0)
+                lines.append(f"  {strategy}: {pnl:+.2f} ({wr:.1%} WR, {trades} trades)")
+        else:
+            lines.append("  (no strategy data)")
+
+        lines.append("")
+        lines.append("Feature-Return Correlations (Top 5):")
+
+        feature_corr = attribution.get("feature_correlation_with_returns", {})
+        if feature_corr:
+            sorted_corr = sorted(feature_corr.items(), key=lambda x: abs(x[1]), reverse=True)
+            for feature, corr in sorted_corr[:5]:
+                lines.append(f"  {feature}: {corr:.3f}")
+        else:
+            lines.append("  (no correlation data)")
+
+        lines.extend(
+            [
+                "",
+                "Top Winners:",
+            ]
+        )
+
+        winners = attribution.get("top_winners", [])
+        if winners:
+            for trade in winners[:3]:
+                lines.append(
+                    f"  {trade.symbol}: {trade.pnl:+.2f} ({trade.pnl_pct:+.2%}) "
+                    f"@ signal_prob={trade.signal_prob:.3f}"
+                )
+        else:
+            lines.append("  (no winning trades)")
+
+        lines.extend(
+            [
+                "",
+                "Top Losers:",
+            ]
+        )
+
+        losers = attribution.get("top_losers", [])
+        if losers:
+            for trade in losers[:3]:
+                lines.append(
+                    f"  {trade.symbol}: {trade.pnl:+.2f} ({trade.pnl_pct:+.2%}) "
+                    f"@ signal_prob={trade.signal_prob:.3f}"
+                )
+        else:
+            lines.append("  (no losing trades)")
 
         return "\n".join(lines)

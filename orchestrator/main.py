@@ -41,6 +41,8 @@ from execution.logger import TradeLogger
 from execution.orders import OrderExecutor
 from monitoring.health import HealthMonitor
 from orchestrator.feature_engineer import FeatureEngineer
+from portfolio.risk_manager import PreExecutionRiskCheck
+from portfolio.schema import PortfolioPosition, PortfolioState
 from risk.breakers import CircuitBreaker
 from risk.monitor import PortfolioMonitor
 from risk.sizer import PositionSizer
@@ -165,6 +167,9 @@ class TradingSystem:
         )
         self._monitor = PortfolioMonitor(initial_capital=capital)
 
+        # Phase 9 Quick Win 3: Portfolio risk checker (pre-execution validation)
+        self._risk_checker = PreExecutionRiskCheck()
+
         # ------------------------------------------------------------------
         # Execution
         # ------------------------------------------------------------------
@@ -230,6 +235,10 @@ class TradingSystem:
     def pre_market_setup(self) -> None:
         """Prepare the system for the trading session."""
         log.info("pre_market_setup_start", market=self._market_type)
+
+        # QUICK WIN 1: Clear prior session state to prevent memory accumulation
+        self._vcp_candidates.clear()
+        log.debug("state_cleared", cleared_vcp_candidates=len(self._vcp_candidates))
 
         # 1. Refresh auth tokens (no-op for paper / Binance)
         try:
@@ -384,6 +393,10 @@ class TradingSystem:
                 self._run_crypto_cycle()
 
             self._monitor.get_drawdown()
+
+            # Phase 9 Quick Win 1: Batch flush circuit breaker state at end of cycle
+            with suppress(Exception):
+                self._circuit_breaker.batch_flush()
 
         finally:
             # Heartbeat fires even on early returns so the health monitor stays informed
@@ -562,13 +575,22 @@ class TradingSystem:
             log.error("equity_feature_fetch_failed", error=str(exc))
             return
 
+        # Batch model predictions: collect all features and predict once
+        # instead of predicting per-symbol (eliminates per-call validation overhead)
+        batch_predictions = self._batch_predict_equity(features_map)
+
         for symbol in self._equity_universe:
             if symbol in self._open_positions:
                 continue
             feature_df = features_map.get(symbol)
             if feature_df is None:
                 continue
-            self._execute_signal(symbol, feature_df, asset_class="equity")
+
+            # Retrieve pre-computed prediction instead of calling model.predict()
+            signal_prob = batch_predictions.get(symbol)
+            self._execute_signal(
+                symbol, feature_df, asset_class="equity", precomputed_signal_prob=signal_prob
+            )
 
     # ------------------------------------------------------------------
     # Internal — crypto cycle
@@ -608,6 +630,7 @@ class TradingSystem:
                 )
                 return
 
+            df._symbol = symbol
             features_df = build_features(df, include_labels=False)
             if features_df.empty:
                 return
@@ -677,11 +700,18 @@ class TradingSystem:
         signal_or_symbol: str | Signal,
         feature_df: pd.DataFrame | None = None,
         asset_class: str = "equity",
+        precomputed_signal_prob: float | None = None,
     ) -> None:
         """
         Execute a signal with mode gating.
 
         Supports both old interface (symbol, feature_df) and new (Signal).
+
+        Parameters
+        ----------
+        precomputed_signal_prob : float, optional
+            If provided, use this probability instead of calling model.predict().
+            Used for batch prediction optimization.
         """
         # Handle both old and new interfaces
         if isinstance(signal_or_symbol, Signal):
@@ -723,7 +753,9 @@ class TradingSystem:
 
             # For legacy interface (feature_df provided), run XGBoost model
             if feature_df is not None:
-                self._execute_legacy_signal(symbol, feature_df, asset_class)
+                self._execute_legacy_signal(
+                    symbol, feature_df, asset_class, precomputed_signal_prob
+                )
             elif signal:
                 # Signal-based execution: use signal's confidence and entry specs
                 self._execute_signal_based(signal, asset_class)
@@ -731,38 +763,65 @@ class TradingSystem:
         except Exception as exc:
             log.error("signal_execution_error", symbol=symbol, error=str(exc))
 
+    def _get_portfolio_snapshot(self) -> PortfolioState:
+        """
+        Build current portfolio state for risk checks.
+
+        Phase 9 Quick Win 3: Used by PreExecutionRiskCheck before every order.
+        """
+        positions = {}
+        for symbol, pos_data in self._monitor._positions.items():
+            positions[symbol] = PortfolioPosition(
+                symbol=symbol,
+                qty=pos_data["qty"],
+                entry_price=pos_data["avg_price"],
+                current_price=pos_data["current_price"],
+            )
+
+        return PortfolioState(
+            positions=positions,
+            total_capital=self._monitor._initial_capital,
+            cash_available=self._cached_capital - sum(p.market_value for p in positions.values()),
+        )
+
     def _execute_legacy_signal(
         self,
         symbol: str,
         feature_df: pd.DataFrame,
         asset_class: str = "equity",
+        precomputed_signal_prob: float | None = None,
     ) -> None:
         """Legacy XGBoost-based execution (for backward compatibility)."""
         try:
             sentiment_score = self._sentiment.get_latest_score(symbol) if self._sentiment else 0.0  # noqa: F841 — logged in signal metadata (future)
             last_row = feature_df.iloc[[-1]]
 
-            # A/B routing: route signal to champion (Production) or challenger (Staging) model
-            date_str = (
-                last_row.index[-1].strftime("%Y-%m-%d")
-                if hasattr(last_row.index[-1], "strftime")
-                else str(last_row.index[-1])
-            )
-            ab_slot = self._ab_router.route(symbol=symbol, date=date_str)
-            model_to_use = self._model
-            if ab_slot == "challenger":
-                if self._challenger_model is None:
-                    try:
-                        self._challenger_model = self._registry.get_latest_model(
-                            segment="EQ", stage="Staging"
-                        )
-                    except RuntimeError:
-                        ab_slot = "champion"  # fall back gracefully
-                else:
-                    model_to_use = self._challenger_model
+            # Use precomputed probability if available (from batch predict),
+            # otherwise call model.predict() (backward compatible with old code)
+            if precomputed_signal_prob is not None:
+                signal_prob = precomputed_signal_prob
+            else:
+                # A/B routing: route signal to champion (Production) or challenger (Staging) model
+                date_str = (
+                    last_row.index[-1].strftime("%Y-%m-%d")
+                    if hasattr(last_row.index[-1], "strftime")
+                    else str(last_row.index[-1])
+                )
+                ab_slot = self._ab_router.route(symbol=symbol, date=date_str)
+                model_to_use = self._model
+                if ab_slot == "challenger":
+                    if self._challenger_model is None:
+                        try:
+                            self._challenger_model = self._registry.get_latest_model(
+                                segment="EQ", stage="Staging"
+                            )
+                        except RuntimeError:
+                            ab_slot = "champion"  # fall back gracefully
+                    else:
+                        model_to_use = self._challenger_model
 
-            probs = model_to_use.predict(last_row[FEATURE_COLUMNS])
-            signal_prob = float(probs.iloc[0])
+                probs = model_to_use.predict(last_row[FEATURE_COLUMNS])
+                signal_prob = float(probs.iloc[0])
 
             threshold = (
                 settings.crypto_signal_threshold
@@ -807,6 +866,35 @@ class TradingSystem:
 
             if qty <= 0:
                 return
+
+            # Phase 9 Quick Win 3: Portfolio risk check before execution
+            try:
+                portfolio = self._get_portfolio_snapshot()
+
+                # Create a minimal Signal object for the risk check
+                from signals.contracts import Signal as SignalContract
+
+                signal_obj = SignalContract(
+                    signal_id=f"xgb_{symbol}_{signal_prob:.2f}",
+                    symbol=symbol,
+                    strategy_name="xgboost",
+                    confidence=signal_prob,
+                    mode="paper" if settings.paper_trade_mode else "live",
+                    features={},
+                )
+
+                risk_decision = self._risk_checker.check_signal_execution(signal_obj, portfolio)
+                if not risk_decision.allowed:
+                    log.info(
+                        "signal_rejected_portfolio_risk",
+                        symbol=symbol,
+                        reason=risk_decision.reason,
+                        prob=round(signal_prob, 3),
+                    )
+                    return
+            except Exception as exc:
+                log.warning("portfolio_risk_check_failed", symbol=symbol, error=str(exc))
+                # Continue on risk check error (fail-open to avoid blocking trades)
 
             order_id = self._executor.place_market_order(
                 symbol=symbol,
@@ -886,6 +974,28 @@ class TradingSystem:
 
             if qty <= 0:
                 return
+
+            # Phase 9 Quick Win 3: Portfolio risk check before execution
+            try:
+                portfolio = self._get_portfolio_snapshot()
+                risk_decision = self._risk_checker.check_signal_execution(signal, portfolio)
+                if not risk_decision.allowed:
+                    log.info(
+                        "signal_rejected_portfolio_risk",
+                        signal_id=signal.signal_id,
+                        symbol=symbol,
+                        reason=risk_decision.reason,
+                        confidence=round(signal.confidence, 3),
+                    )
+                    return
+            except Exception as exc:
+                log.warning(
+                    "portfolio_risk_check_failed",
+                    signal_id=signal.signal_id,
+                    symbol=symbol,
+                    error=str(exc),
+                )
+                # Continue on risk check error (fail-open to avoid blocking trades)
 
             order_id = self._executor.place_market_order(
                 symbol=symbol,
@@ -1026,6 +1136,51 @@ class TradingSystem:
         except Exception as exc:
             log.error("ensemble_loading_failed", error=str(exc))
 
+    def _batch_predict_equity(self, features_map: dict[str, pd.DataFrame]) -> dict[str, float]:
+        """
+        Batch predict signal probabilities for all symbols at once.
+
+        Instead of calling model.predict() per-symbol (which re-validates features
+        each time), concatenate all features and predict once. This eliminates
+        O(N) validation overhead and leverages vectorized inference.
+
+        Returns
+        -------
+        dict[str, float]
+            Mapping of symbol → signal_probability
+        """
+        if not features_map or not self._model:
+            return {}
+
+        try:
+            # Collect all last rows and symbols in order
+            symbols: list[str] = []
+            feature_list: list[pd.DataFrame] = []
+
+            for symbol, feature_df in features_map.items():
+                if feature_df is not None and not feature_df.empty:
+                    symbols.append(symbol)
+                    # Extract last row (most recent bar)
+                    feature_list.append(feature_df.iloc[[-1]][FEATURE_COLUMNS])
+
+            if not symbols:
+                return {}
+
+            # Concatenate all last rows into single batch DataFrame
+            batch_features = pd.concat(feature_list, ignore_index=False)
+
+            # Single model.predict() call on entire batch (validates once)
+            probs = self._model.predict(batch_features)
+
+            # Map probabilities back to symbols
+            result = {symbol: float(prob) for symbol, prob in zip(symbols, probs, strict=True)}
+            log.debug("batch_predict_complete", n_symbols=len(symbols))
+            return result
+
+        except Exception as exc:
+            log.error("batch_predict_failed", error=str(exc))
+            return {}
+
     def _fetch_equity_features(self) -> dict[str, pd.DataFrame]:
         from datetime import timedelta
 
@@ -1046,6 +1201,8 @@ class TradingSystem:
             if df is None or len(df) < 60:
                 return symbol, None
             try:
+                # Set symbol as attribute for cache key generation
+                df._symbol = symbol
                 features = build_features(df, include_labels=False)
                 return symbol, features if not features.empty else None
             except Exception as exc:

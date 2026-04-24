@@ -12,6 +12,9 @@ LABEL_COLUMNS:   training-only columns — never passed to the model.
 
 from __future__ import annotations
 
+import hashlib
+import io
+import pickle
 from math import sqrt
 
 import numpy as np
@@ -19,10 +22,109 @@ import pandas as pd
 import pandas_ta as ta
 import structlog
 
+from data.redis_keys import RedisKeys
+from data.store import get_redis
+
 log = structlog.get_logger(__name__)
+
+# Feature cache: {(symbol, interval): (features_df, timestamp)}
+_FEATURE_CACHE: dict[tuple[str, str], tuple[pd.DataFrame, float]] = {}
+_FEATURE_CACHE_TTL = 86400  # 24 hours
+
+
+def _get_feature_cache_key(symbol: str, date: str) -> str:
+    """Generate Redis cache key for features."""
+    return RedisKeys.ml_features(symbol, date)
+
+
+def _try_get_cached_features(symbol: str, date: str) -> pd.DataFrame | None:
+    """
+    Attempt to fetch cached features from Redis.
+
+    Parameters
+    ----------
+    symbol : str
+        Stock symbol
+    date : str
+        Date (YYYY-MM-DD format)
+
+    Returns
+    -------
+    pd.DataFrame or None
+        Cached features if found, None otherwise
+    """
+    try:
+        redis = get_redis()
+        key = _get_feature_cache_key(symbol, date)
+        cached = redis.get(key)
+        if cached:
+            df = pd.read_json(io.BytesIO(cached))
+            log.debug("feature_cache_hit", symbol=symbol, date=date)
+            return df
+    except Exception as e:
+        log.warning("feature_cache_fetch_failed", symbol=symbol, error=str(e))
+    return None
+
+
+def _cache_features_redis(symbol: str, date: str, features_df: pd.DataFrame) -> None:
+    """
+    Cache computed features in Redis with 24h TTL.
+
+    Parameters
+    ----------
+    symbol : str
+        Stock symbol
+    date : str
+        Date (YYYY-MM-DD format)
+    features_df : pd.DataFrame
+        Computed feature DataFrame
+    """
+    try:
+        redis = get_redis()
+        key = _get_feature_cache_key(symbol, date)
+        serialized = features_df.to_json().encode()
+        redis.setex(key, _FEATURE_CACHE_TTL, serialized)
+        log.debug("feature_cached", symbol=symbol, date=date, ttl_hours=24)
+    except Exception as e:
+        log.warning("feature_cache_write_failed", symbol=symbol, error=str(e))
+
 
 # Warm-up period: longest indicator look-back (52-week high = 252 bars)
 _WARMUP = 252
+
+
+def _get_feature_cache_key(symbol: str, df: pd.DataFrame) -> str:
+    """Generate stable cache key based on symbol and data hash."""
+    # Use last row's timestamp + dataframe shape to create stable key
+    last_timestamp = str(df.index[-1])
+    hash_input = f"{symbol}:{last_timestamp}:{df.shape}".encode()
+    data_hash = hashlib.sha256(hash_input).hexdigest()[:16]
+    return f"features:{symbol}:{data_hash}"
+
+
+def _get_cached_features_from_redis(cache_key: str) -> pd.DataFrame | None:
+    """Retrieve features from Redis cache."""
+    try:
+        redis = get_redis()
+        cached = redis.get(cache_key)
+        if cached:
+            features = pickle.loads(cached)
+            log.debug("feature_cache_hit", cache_key=cache_key)
+            return features
+    except Exception as exc:
+        log.debug("redis_cache_read_error", error=str(exc))
+    return None
+
+
+def _set_cached_features_in_redis(cache_key: str, features: pd.DataFrame) -> None:
+    """Store features in Redis cache with TTL."""
+    try:
+        redis = get_redis()
+        redis.setex(cache_key, _FEATURE_CACHE_TTL, pickle.dumps(features))
+        log.debug("feature_cache_set", cache_key=cache_key)
+    except Exception as exc:
+        log.debug("redis_cache_write_error", error=str(exc))
+
 
 # ---------------------------------------------------------------------------
 # Column name registries
@@ -99,6 +201,8 @@ def build_features(
     india_vix: float | None = None,
     sentiment_score: float | None = None,
     regime_code: int | None = None,
+    use_cache: bool = True,
+    symbol: str | None = None,
 ) -> pd.DataFrame:
     """
     Convert raw OHLCV DataFrame into the XGBoost feature vector.
@@ -122,6 +226,10 @@ def build_features(
     regime_code:
         Ordinal encoding of RegimeState (0=TRENDING_BULL, 1=TRENDING_BEAR,
         2=CHOPPY, 3=HIGH_VOL). Populates ``regime_code``.
+    use_cache:
+        If True, try to fetch from Redis cache before computing (24h TTL).
+    symbol:
+        Optional stock symbol for Redis caching. If not provided, caching is skipped.
 
     Returns
     -------
@@ -133,12 +241,22 @@ def build_features(
     """
     _validate_input(df)
 
+    # Check Redis cache if enabled
+    if use_cache and symbol:
+        cache_key = _get_feature_cache_key(symbol, df)
+        cached = _get_cached_features_from_redis(cache_key)
+        if cached is not None:
+            return cached
+    else:
+        cache_key = None
+
     out = pd.DataFrame(index=df.index)
 
-    close = df["close"].astype(float)
-    high = df["high"].astype(float)
-    low = df["low"].astype(float)
-    volume = df["volume"].astype(float)
+    # Single astype() call at start — optimized vs multiple calls per column
+    close = df["close"].astype("float64")
+    high = df["high"].astype("float64")
+    low = df["low"].astype("float64")
+    volume = df["volume"].astype("float64")
 
     # ------------------------------------------------------------------ #
     # MOMENTUM
@@ -257,6 +375,10 @@ def build_features(
         c for c in out.columns if c not in LABEL_COLUMNS + AUXILIARY_FEATURE_COLUMNS + ["close"]
     ]
     out = out.dropna(subset=feature_cols)
+
+    # Cache to Redis if enabled
+    if use_cache and symbol:
+        _set_cached_features_in_redis(cache_key, out)
 
     log.debug("features_built", rows=len(out), cols=len(out.columns))
     return out
