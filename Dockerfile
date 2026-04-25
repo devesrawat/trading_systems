@@ -21,8 +21,11 @@ RUN uv sync --frozen --no-install-project --no-dev
 FROM python:3.13-slim AS runtime
 
 # System packages needed at runtime
+# libomp and libgomp are required by LightGBM and XGBoost
 RUN apt-get update && apt-get install -y --no-install-recommends \
         libpq5 \
+        libgomp1 \
+        libomp-dev \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
