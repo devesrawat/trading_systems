@@ -16,27 +16,21 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Drop old single-column index (optional, but cleaner)
+    # Drop old single-column index if it exists
     op.execute("DROP INDEX IF EXISTS ohlcv_token_time_idx")
 
-    # Create new composite index: (token, interval, time DESC)
-    # Using BRIN compression for time-series data (compact & fast)
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ohlcv_token_interval_time_idx
-        ON ohlcv (token, interval, time DESC)
-        USING brin
-    """)
+    # Create composite indexes optimized for batch queries
+    # Removed DESC ordering for compatibility with PostgreSQL 13+
+    # PostgreSQL optimizes reverse scans automatically
+    op.execute(
+        "CREATE INDEX IF NOT EXISTS ohlcv_token_interval_time_idx ON ohlcv (token, interval, time)"
+    )
 
-    # Also add interval-time index for filtered queries
-    op.execute("""
-        CREATE INDEX IF NOT EXISTS ohlcv_interval_time_idx
-        ON ohlcv (interval, time DESC)
-        USING brin
-    """)
+    op.execute("CREATE INDEX IF NOT EXISTS ohlcv_interval_time_idx ON ohlcv (interval, time)")
 
 
 def downgrade() -> None:
     op.execute("DROP INDEX IF EXISTS ohlcv_token_interval_time_idx")
     op.execute("DROP INDEX IF EXISTS ohlcv_interval_time_idx")
-    # Restore old index
-    op.execute("CREATE INDEX IF NOT EXISTS ohlcv_token_time_idx ON ohlcv (token, time DESC)")
+    # Restore old index without DESC
+    op.execute("CREATE INDEX IF NOT EXISTS ohlcv_token_time_idx ON ohlcv (token, time)")
