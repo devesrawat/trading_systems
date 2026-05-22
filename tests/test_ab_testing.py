@@ -40,7 +40,7 @@ def mock_redis():
     def mock_zadd_impl(key, mapping, ex=None):
         if key not in redis_data:
             redis_data[key] = []
-        for item, score in mapping.items():
+        for item, _score in mapping.items():
             redis_data[key].append(item)
 
     def mock_zrange_impl(key, start, stop):
@@ -67,10 +67,10 @@ def ab_tester(mock_redis, mock_engine):
     with (
         patch("orchestrator.ab_tester.get_redis", return_value=mock_redis),
         patch("orchestrator.ab_tester.get_engine", return_value=mock_engine),
+        patch("orchestrator.model_registry.get_redis", return_value=mock_redis),
     ):
         registry = ModelRegistry()
-        with patch("orchestrator.model_registry.get_redis", return_value=mock_redis):
-            tester = ABTestOrchestrator(registry=registry)
+        tester = ABTestOrchestrator(registry=registry)
     return tester
 
 
@@ -496,7 +496,7 @@ class TestABTestingIntegration:
 
         # 2. Log some results (simulate trades)
         results_list = []
-        for i in range(20):
+        for _i in range(20):
             champion_result = {
                 "pnl": float(np.random.normal(100, 50)),
                 "sharpe": float(np.random.normal(1.0, 0.2)),

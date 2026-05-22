@@ -233,7 +233,7 @@ class TestEnsembleVoting:
         assert "lgb" in confidences
         assert "patchtst" in confidences
 
-        for model, conf in confidences.items():
+        for _model, conf in confidences.items():
             assert len(conf) == len(X_test)
             assert np.all(conf >= 0)
             assert np.all(conf <= 1)

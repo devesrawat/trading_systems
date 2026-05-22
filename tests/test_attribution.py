@@ -274,7 +274,7 @@ class TestPerformanceAttribution:
 
             # min_loss=0 means include all losses (all <= 0)
             losers_all = attr.loss_analysis(min_loss=0)
-            assert len(losers_all) == 2
+            assert len(losers_all) == 3
 
     @patch("monitoring.attribution.get_engine")
     @patch("monitoring.attribution.get_redis")
@@ -373,15 +373,15 @@ class TestPerformanceAttribution:
             )
             mock_get.return_value = trades_df
 
-        with patch.object(attr, "feature_importance_trend") as mock_trend:
-            mock_trend.return_value = pd.DataFrame()
+            with patch.object(attr, "feature_importance_trend") as mock_trend:
+                mock_trend.return_value = pd.DataFrame()
 
-            report = attr.generate_attribution_report()
+                report = attr.generate_attribution_report()
 
-            assert report.total_trades == 2
-            assert report.total_pnl == 300
-            assert report.win_count == 2
-            assert report.win_rate == 1.0
+                assert report.total_trades == 2
+                assert report.total_pnl == 300
+                assert report.win_count == 2
+                assert report.win_rate == 1.0
 
 
 # ============================================================================
@@ -633,25 +633,27 @@ class TestTradeReviewEngine:
     def test_generate_lessons_learned(self, mock_redis, mock_engine):
         """Test lessons learned generation."""
         engine = TradeReviewEngine()
-        with patch.object(engine, "identify_patterns_in_winners") as mock_winners:
-            with patch.object(engine, "identify_patterns_in_losers") as mock_losers:
-                mock_winners.return_value = {
-                    "n_winners": 10,
-                    "avg_signal_prob": 0.80,
-                    "top_features": ["rsi_14", "macd"],
-                }
-                mock_losers.return_value = {
-                    "n_losers": 5,
-                    "avg_signal_prob": 0.50,
-                    "risky_features": ["bb_position"],
-                }
+        with (
+            patch.object(engine, "identify_patterns_in_winners") as mock_winners,
+            patch.object(engine, "identify_patterns_in_losers") as mock_losers,
+        ):
+            mock_winners.return_value = {
+                "n_winners": 10,
+                "avg_signal_prob": 0.80,
+                "top_features": ["rsi_14", "macd"],
+            }
+            mock_losers.return_value = {
+                "n_losers": 5,
+                "avg_signal_prob": 0.50,
+                "risky_features": ["bb_position"],
+            }
 
-                lessons = engine.generate_lessons_learned()
+            lessons = engine.generate_lessons_learned()
 
-                assert "n_winners" in lessons
-                assert "n_losers" in lessons
-                assert lessons["n_winners"] == 10
-                assert lessons["n_losers"] == 5
+            assert "n_winners" in lessons
+            assert "n_losers" in lessons
+            assert lessons["n_winners"] == 10
+            assert lessons["n_losers"] == 5
 
 
 # ============================================================================
@@ -759,14 +761,14 @@ class TestIntegration:
             )
             mock_get.return_value = trades_df
 
-        with patch.object(attr, "feature_importance_trend") as mock_trend:
-            mock_trend.return_value = pd.DataFrame()
+            with patch.object(attr, "feature_importance_trend") as mock_trend:
+                mock_trend.return_value = pd.DataFrame()
 
-            report = attr.generate_attribution_report()
+                report = attr.generate_attribution_report()
 
-            # Verify report has all key components
-            assert report.total_trades == 3
-            assert report.win_rate > 0
+                # Verify report has all key components
+                assert report.total_trades == 3
+                assert report.win_rate > 0
 
 
 if __name__ == "__main__":

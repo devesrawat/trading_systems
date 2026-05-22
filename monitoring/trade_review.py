@@ -15,18 +15,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from enum import Enum
+from enum import StrEnum
 from typing import Any
 
 import pandas as pd
 import structlog
+from sqlalchemy import text
 
 from data.store import get_engine, get_redis
 
 log = structlog.get_logger(__name__)
 
 
-class OutcomeCategory(str, Enum):
+class OutcomeCategory(StrEnum):
     """Trade outcome categorization."""
 
     HIT_TARGET = "hit_target"  # Reached profit target
@@ -100,7 +101,7 @@ class TradeReviewEngine:
         TradeContext | None
             Full trade context, or None if not found
         """
-        query = f"""
+        query = text("""
             SELECT
                 id,
                 symbol,
@@ -111,15 +112,15 @@ class TradeReviewEngine:
                 quantity,
                 side,
                 signal_prob,
-                '{{}}'::jsonb as features_used,
+                '{}'::jsonb as features_used,
                 NULL::jsonb as shap_values
             FROM paper_trades
-            WHERE id = {trade_id}
-        """
+            WHERE id = :trade_id
+        """)
 
         try:
             with self._engine.connect() as conn:
-                df = pd.read_sql(query, conn)
+                df = pd.read_sql(query, conn, params={"trade_id": trade_id})
         except Exception as exc:
             log.error("fetch_trade_failed", trade_id=trade_id, error=str(exc))
             return None
@@ -545,7 +546,7 @@ class TradeReviewEngine:
         start = date.today() - timedelta(days=lookback_days)
         end = date.today()
 
-        query = f"""
+        query = text("""
             SELECT
                 id,
                 symbol,
@@ -556,15 +557,19 @@ class TradeReviewEngine:
                 signal_prob,
                 0.0 as pnl,
                 0.0 as pnl_pct,
-                '{{}}'::jsonb as features_used,
+                '{}'::jsonb as features_used,
                 NULL::jsonb as shap_values
             FROM paper_trades
-            WHERE time >= '{start}'::date
-              AND time < '{end + timedelta(days=1)}'::date
+            WHERE time >= :start::date
+              AND time < :end::date
             ORDER BY time DESC
-        """
+        """)
 
         with self._engine.connect() as conn:
-            df = pd.read_sql(query, conn)
+            df = pd.read_sql(
+                query,
+                conn,
+                params={"start": str(start), "end": str(end + timedelta(days=1))},
+            )
 
         return df

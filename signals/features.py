@@ -262,15 +262,25 @@ def build_features(
     # VOLATILITY
     # ------------------------------------------------------------------ #
     atr = ta.atr(high, low, close, length=14)
-    out["atr_14"] = atr
-    out["atr_pct"] = atr / close
+    if atr is None:
+        out["atr_14"] = np.nan
+        out["atr_pct"] = np.nan
+    else:
+        out["atr_14"] = atr
+        out["atr_pct"] = atr / close
 
     bb = ta.bbands(close, length=20, std=2.0)
-    out["bb_lower"] = bb.iloc[:, 0]
-    out["bb_mid"] = bb.iloc[:, 1]
-    out["bb_upper"] = bb.iloc[:, 2]
-    bb_range = (out["bb_upper"] - out["bb_lower"]).replace(0, np.nan)
-    out["bb_position"] = (close - out["bb_lower"]) / bb_range
+    if bb is None:
+        out["bb_lower"] = np.nan
+        out["bb_mid"] = np.nan
+        out["bb_upper"] = np.nan
+        out["bb_position"] = np.nan
+    else:
+        out["bb_lower"] = bb.iloc[:, 0]
+        out["bb_mid"] = bb.iloc[:, 1]
+        out["bb_upper"] = bb.iloc[:, 2]
+        bb_range = (out["bb_upper"] - out["bb_lower"]).replace(0, np.nan)
+        out["bb_position"] = (close - out["bb_lower"]) / bb_range
 
     pct_chg = close.pct_change()
     out["realized_vol_10"] = pct_chg.rolling(10).std() * sqrt(252)
@@ -293,16 +303,25 @@ def build_features(
     # ------------------------------------------------------------------ #
     # TREND
     # ------------------------------------------------------------------ #
-    out["ema_9"] = ta.ema(close, length=9)
-    out["ema_21"] = ta.ema(close, length=21)
-    out["ema_50"] = ta.ema(close, length=50)
-    out["ema_cross_9_21"] = np.sign(out["ema_9"] - out["ema_21"])
+    ema_9 = ta.ema(close, length=9)
+    ema_21 = ta.ema(close, length=21)
+    ema_50 = ta.ema(close, length=50)
+    out["ema_9"] = ema_9 if ema_9 is not None else np.nan
+    out["ema_21"] = ema_21 if ema_21 is not None else np.nan
+    out["ema_50"] = ema_50 if ema_50 is not None else np.nan
+    ema_diff = out["ema_9"] - out["ema_21"]
+    out["ema_cross_9_21"] = ema_diff.apply(lambda x: np.sign(x) if pd.notna(x) else np.nan)
     out["price_vs_ema50"] = (close - out["ema_50"]) / out["ema_50"].replace(0, np.nan)
 
     adx_df = ta.adx(high, low, close, length=14)
-    out["adx_14"] = adx_df.iloc[:, 0]
-    out["di_plus"] = adx_df.iloc[:, 1]
-    out["di_minus"] = adx_df.iloc[:, 2]
+    if adx_df is None:
+        out["adx_14"] = np.nan
+        out["di_plus"] = np.nan
+        out["di_minus"] = np.nan
+    else:
+        out["adx_14"] = adx_df.iloc[:, 0]
+        out["di_plus"] = adx_df.iloc[:, 1]
+        out["di_minus"] = adx_df.iloc[:, 2]
 
     # ------------------------------------------------------------------ #
     # MEAN REVERSION

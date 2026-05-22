@@ -23,6 +23,7 @@ import mlflow
 import numpy as np
 import pandas as pd
 import structlog
+from sqlalchemy import text
 
 from data.store import get_engine, get_redis
 from monitoring.telegram_notifier import TelegramNotifier
@@ -573,7 +574,7 @@ class FeatureDriftReporter:
 
     def _fetch_trades_with_features(self, start: date, end: date) -> pd.DataFrame:
         """Fetch trades with features_used JSON column."""
-        query = f"""
+        query = text("""
             SELECT
                 id,
                 time,
@@ -582,15 +583,19 @@ class FeatureDriftReporter:
                 quantity,
                 price,
                 signal_prob,
-                '{{}}'::jsonb as features_used,
+                '{}'::jsonb as features_used,
                 0.0 as pnl_pct
             FROM paper_trades
-            WHERE time >= '{start}'::date
-              AND time < '{end + timedelta(days=1)}'::date
+            WHERE time >= :start::date
+              AND time < :end::date
             ORDER BY time DESC
-        """
+        """)
 
         with self._engine.connect() as conn:
-            df = pd.read_sql(query, conn)
+            df = pd.read_sql(
+                query,
+                conn,
+                params={"start": str(start), "end": str(end + timedelta(days=1))},
+            )
 
         return df

@@ -131,7 +131,7 @@ class ABTestReporter:
                     delta_str = f"{sign} {delta:+.4f}"
                 else:
                     delta_str = ""
-            except:
+            except Exception:
                 delta_str = ""
 
             report_lines.append(f"| {label} | {champ_str} | {chall_str} | {delta_str} |")
@@ -273,7 +273,7 @@ class ABTestReporter:
         # Sharpe ratio test
         chall_sharpes = np.array([r["sharpe"] for r in challenger_results])
         champ_sharpes = np.array([r["sharpe"] for r in champion_results])
-        sharpe_t, sharpe_p = sp_stats.ttest_ind(chall_sharpes, champ_sharpes)
+        _sharpe_t, sharpe_p = sp_stats.ttest_ind(chall_sharpes, champ_sharpes)
 
         # Win rate test (binomial)
         chall_wins = np.array([r["win"] for r in challenger_results])
@@ -286,12 +286,12 @@ class ABTestReporter:
             [np.sum(chall_wins), len(chall_wins) - np.sum(chall_wins)],
             [np.sum(champ_wins), len(champ_wins) - np.sum(champ_wins)],
         ]
-        chi2, win_rate_p, _, _ = sp_stats.chi2_contingency(contingency)
+        _chi2, win_rate_p, _, _ = sp_stats.chi2_contingency(contingency)
 
         # PnL test
         chall_pnls = np.array([r["pnl"] for r in challenger_results])
         champ_pnls = np.array([r["pnl"] for r in champion_results])
-        pnl_t, pnl_p = sp_stats.ttest_ind(chall_pnls, champ_pnls)
+        _pnl_t, pnl_p = sp_stats.ttest_ind(chall_pnls, champ_pnls)
 
         # Determine if challenger wins
         challenger_wins = (

@@ -748,10 +748,10 @@ class TestErrorResilience:
 
         # Should not raise (error is caught and logged)
         with patch.object(runner_mocked, "_send_telegram_alert"):
-            try:
+            import contextlib
+
+            with contextlib.suppress(SystemExit):
                 runner_mocked.safe_start()
-            except SystemExit:
-                pass  # safe_start calls sys.exit(1) on error
 
     def test_safe_trading_loop_continues_on_error(self, runner_mocked: OrchestratorRunner) -> None:
         """safe_trading_loop continues even on error."""

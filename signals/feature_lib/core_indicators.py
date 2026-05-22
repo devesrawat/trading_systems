@@ -119,7 +119,7 @@ def compute_roc(close: pd.Series, period: int = 5) -> pd.Series:
         ROC as decimal (e.g., 0.05 for +5%).
     """
     result = ta.roc(close, length=period)
-    return result if result is not None else pd.Series(np.nan, index=close.index)
+    return result / 100.0 if result is not None else pd.Series(np.nan, index=close.index)
 
 
 def compute_macd_cross(macd: pd.Series, signal: pd.Series) -> pd.Series:

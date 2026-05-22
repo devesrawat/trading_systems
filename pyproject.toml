@@ -14,15 +14,12 @@ dependencies = [
     "pyyaml>=6.0.1",
     "apscheduler>=3.10.4",
     "structlog>=24.1.0",
-
     # Market data
     "kiteconnect>=5.0.1",
     "finnhub-python>=2.4.19",
     "feedparser>=6.0.11",
-
     # Technical analysis
     "pandas-ta>=0.3.14b",
-
     # ML
     "lightgbm>=4.3.0",
     "xgboost>=2.0.3",
@@ -30,25 +27,22 @@ dependencies = [
     "hmmlearn>=0.3.2",
     "optuna>=3.6.1",
     "shap>=0.45.0",
-
     # NLP / LLM
     "transformers>=4.39.0",
     "torch>=2.2.1",
     "sentence-transformers>=2.5.1",
-
     # Database
     "alembic>=1.13.0",
     "sqlalchemy>=2.0.28",
     "psycopg2-binary>=2.9.9",
     "redis>=5.0.3",
-
     # Monitoring
     "mlflow>=2.11.1",
     "prometheus-client>=0.20.0",
     "python-telegram-bot>=21.1",
-
     # Backtesting
     "vectorbt>=0.26.2",
+    "statsmodels>=0.14.6",
 ]
 
 [dependency-groups]

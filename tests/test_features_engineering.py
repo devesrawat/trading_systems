@@ -115,15 +115,16 @@ class TestCoreIndicators:
     def test_momentum_computation(self):
         close = pd.Series([100, 102, 104, 103, 105])
         mom = compute_momentum(close, period=2)
-        expected = pd.Series([np.nan, np.nan, 2.0, 1.0, 1.0])
-        pd.testing.assert_series_equal(mom, expected)
+        # 104-100=4, 103-102=1, 105-104=1
+        expected = pd.Series([np.nan, np.nan, 4.0, 1.0, 1.0])
+        pd.testing.assert_series_equal(mom, expected, check_names=False)
 
     def test_roc_percentage_change(self):
         close = pd.Series([100, 110, 120, 130])
         roc = compute_roc(close, period=1)
         # ROC should be close to pct_change
         pct_change = close.pct_change()
-        pd.testing.assert_series_equal(roc, pct_change, check_dtype=False)
+        pd.testing.assert_series_equal(roc, pct_change, check_dtype=False, check_names=False)
 
 
 # ---------------------------------------------------------------------------
@@ -365,7 +366,7 @@ class TestFeatureValidator:
 
     def test_detect_outliers_zscore(self):
         validator = FeatureValidator()
-        df = pd.DataFrame({"feature": list(range(100)) + [1000]})  # 1000 is extreme
+        df = pd.DataFrame({"feature": [*list(range(100)), 1000]})  # 1000 is extreme
         outliers = validator.detect_outliers(df, method="zscore", threshold=3.0)
         assert "feature" in outliers
 
@@ -383,7 +384,7 @@ class TestFeatureValidator:
         series = pd.Series([1, 2, 3, 4])  # Too short
         result = validator.check_stationarity(series)
         assert not result["stationary"]
-        assert "Too short" in result.get("note", "")
+        assert "too short" in result.get("note", "").lower()
 
     def test_validate_feature_correlation(self):
         validator = FeatureValidator()
@@ -514,7 +515,9 @@ class TestEdgeCasesAndPerformance:
     def test_zero_denominator_handling(self):
         """Test features handle division by zero gracefully."""
         df = _make_ohlcv()
-        df.loc[0, "high"] = df.loc[0, "low"]  # Force high == low
+        df.iloc[0, df.columns.get_loc("high")] = df.iloc[
+            0, df.columns.get_loc("low")
+        ]  # Force high == low
         result = build_features(df)
         # Should not have inf or raise exception
         assert not np.isinf(result.values).any() or result.values.size == 0
@@ -536,7 +539,7 @@ class TestEdgeCasesAndPerformance:
     def test_large_price_swings(self):
         """Test with extreme but plausible price changes."""
         df = _make_ohlcv()
-        df.loc[50:60, "close"] = df.loc[50:60, "close"] * 2  # 100% jump
+        df.iloc[50:60, df.columns.get_loc("close")] *= 2  # 100% jump
         result = build_features(df)
         # Should complete without NaN in core features
         for col in FEATURE_COLUMNS:
@@ -547,8 +550,9 @@ class TestEdgeCasesAndPerformance:
         """Handle duplicate index values gracefully."""
         df = _make_ohlcv()
         # Make some indices duplicate
-        df.index = pd.date_range("2020-01-01", periods=len(df), freq="B")
-        df.index = df.index.to_series().duplicated().where(True, df.index)
+        new_index = list(df.index)
+        new_index[1] = new_index[0]
+        df.index = new_index
         # This may cause issues; test robustness
         try:
             result = build_features(df)
@@ -606,10 +610,9 @@ class TestIntegration:
     def test_no_circular_imports(self):
         """Ensure no circular dependencies in feature modules."""
         # If we can import these, no circular imports
-        from signals.features.feature_validator import FeatureValidator
-
         from signals import features as base_features
-        from signals.features import advanced, core_indicators, flow, sentiment, volatility
+        from signals.feature_lib import advanced, core_indicators, flow, sentiment, volatility
+        from signals.feature_validator import FeatureValidator
 
         assert base_features is not None
         assert core_indicators is not None

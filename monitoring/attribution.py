@@ -24,6 +24,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 import structlog
+from sqlalchemy import text
 
 from data.store import get_engine, get_redis
 from signals.features import FEATURE_COLUMNS
@@ -191,7 +192,7 @@ class PerformanceAttribution:
 
         # Group by rolling window using pd.Grouper
         trend_data = []
-        for period, group in trades_df_indexed.groupby(pd.Grouper(freq=f"{window_days}D")):
+        for _period, group in trades_df_indexed.groupby(pd.Grouper(freq=f"{window_days}D")):
             if group.empty:
                 continue
 
@@ -574,7 +575,7 @@ class PerformanceAttribution:
 
     def _get_trades_in_range(self, start: date, end: date) -> pd.DataFrame:
         """Fetch all trades in date range, with features and SHAP values."""
-        query = f"""
+        query = text("""
             SELECT
                 id,
                 symbol,
@@ -588,16 +589,20 @@ class PerformanceAttribution:
                 tag as strategy_name,
                 COALESCE(position_size_inr * quantity / NULLIF(price, 0), 0) as pnl,
                 0.0 as pnl_pct,
-                '{{}}'::jsonb as features_used,
+                '{}'::jsonb as features_used,
                 NULL::jsonb as shap_values
             FROM paper_trades
-            WHERE time >= '{start}'::date
-              AND time < '{end + timedelta(days=1)}'::date
+            WHERE time >= :start::date
+              AND time < :end::date
             ORDER BY time DESC
-        """
+        """)
 
         with self._engine.connect() as conn:
-            df = pd.read_sql(query, conn)
+            df = pd.read_sql(
+                query,
+                conn,
+                params={"start": str(start), "end": str(end + timedelta(days=1))},
+            )
 
         if df.empty:
             return df

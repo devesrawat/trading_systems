@@ -46,6 +46,7 @@ from portfolio.schema import PortfolioPosition, PortfolioState
 from risk.breakers import CircuitBreaker
 from risk.monitor import PortfolioMonitor
 from risk.sizer import PositionSizer
+from signals.alpha_composite import AlphaEngine
 from signals.contracts import Signal
 from signals.features import FEATURE_COLUMNS, build_features
 from signals.model import ModelRegistry, SignalModel
@@ -197,6 +198,11 @@ class TradingSystem:
         from orchestrator.ab_router import SignalRouter
 
         self._ab_router = SignalRouter(challenger_pct=settings.ab_test_pct)
+
+        # ------------------------------------------------------------------
+        # Phase 10: Multi-Strategy Alpha Engine
+        # ------------------------------------------------------------------
+        self._alpha_engine = AlphaEngine(kite=getattr(self._equity_provider, "kite", None))
 
         # Phase 8: Feature engineering and ensemble models
         self._feature_engineer = FeatureEngineer()
@@ -823,6 +829,26 @@ class TradingSystem:
                 probs = model_to_use.predict(last_row[FEATURE_COLUMNS])
                 signal_prob = float(probs.iloc[0])
 
+            # Apply Multi-Strategy Alpha Multiplier
+            if asset_class == "equity":
+                from portfolio.exposure import get_sector_for_symbol
+
+                sector = get_sector_for_symbol(symbol)
+                regime_state = (
+                    self._current_regime.state.value if self._current_regime else "normal"
+                )
+
+                alpha_multiplier = self._alpha_engine.calculate_multiplier(
+                    symbol=symbol, sector=sector, current_regime=regime_state, side="BUY"
+                )
+                signal_prob *= alpha_multiplier
+                log.info(
+                    "alpha_multiplier_applied",
+                    symbol=symbol,
+                    multiplier=round(alpha_multiplier, 2),
+                    final_prob=round(signal_prob, 3),
+                )
+
             threshold = (
                 settings.crypto_signal_threshold
                 if asset_class == "crypto"
@@ -926,6 +952,26 @@ class TradingSystem:
         """Execute a Signal object with unified contract."""
         try:
             symbol = signal.symbol
+
+            # Apply Multi-Strategy Alpha Multiplier
+            if asset_class == "equity":
+                from portfolio.exposure import get_sector_for_symbol
+
+                sector = get_sector_for_symbol(symbol)
+                regime_state = (
+                    self._current_regime.state.value if self._current_regime else "normal"
+                )
+
+                alpha_multiplier = self._alpha_engine.calculate_multiplier(
+                    symbol=symbol, sector=sector, current_regime=regime_state, side="BUY"
+                )
+                signal.confidence *= alpha_multiplier
+                log.info(
+                    "alpha_multiplier_applied_signal",
+                    symbol=symbol,
+                    multiplier=round(alpha_multiplier, 2),
+                    final_conf=round(signal.confidence, 3),
+                )
 
             # Log the signal
             self._logger.log_signal(

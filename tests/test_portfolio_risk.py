@@ -446,7 +446,7 @@ class TestPreExecutionRiskCheck:
         checker = PreExecutionRiskCheck(limits=tight_limits)
         decision = checker.check_signal_execution(sample_signal, empty_portfolio)
         assert decision.allowed is False
-        assert "position_count" in [c for c in decision.checks_failed]
+        assert "position_count" in list(decision.checks_failed)
 
     def test_check_signal_execution_sector_concentration(self, empty_portfolio, sample_signal):
         """Sector concentration check is performed."""
