@@ -121,3 +121,15 @@ strategies:
     mode: research
     schedule: null
     min_backtest_status: null
+
+  - name: momentum_sentinel
+    class_path: signals.strategies.momentum_sentinel.MomentumSentinelStrategy
+    enabled: true
+    asset_classes: [equity]
+    interval: day
+    lookback_days: 120
+    params: {}
+    risk_profile: default
+    mode: research
+    schedule: null
+    min_backtest_status: null

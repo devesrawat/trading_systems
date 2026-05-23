@@ -66,9 +66,37 @@ class AlphaEngine:
             log.debug("alpha_boost_options_short", symbol=symbol, boost=0.2)
 
         # 3. Regime Alignment
-        # If high vol and we are doing momentum, maybe boost?
-        # If low vol and we are doing mean reversion, maybe boost?
-        # This part can be refined as we define the "strategies" better.
+        # trending_bull → boost BUY / suppress SELL
+        # trending_bear → suppress BUY (avoid chasing longs in a downtrend) / boost SELL
+        # choppy        → suppress both sides (low signal quality)
+        # high_vol      → mild caution both sides
+        _BUY_DELTA: dict[str, float] = {
+            "trending_bull": 0.1,
+            "trending_bear": -0.3,
+            "high_vol": -0.1,
+            "choppy": -0.2,
+            "normal": 0.0,
+        }
+        _SELL_DELTA: dict[str, float] = {
+            "trending_bull": -0.1,
+            "trending_bear": 0.1,
+            "high_vol": 0.0,
+            "choppy": -0.1,
+            "normal": 0.0,
+        }
+        regime_key = str(current_regime).lower() if current_regime is not None else "normal"
+        regime_delta = (
+            _BUY_DELTA.get(regime_key, 0.0) if side == "BUY" else _SELL_DELTA.get(regime_key, 0.0)
+        )
+        if regime_delta != 0.0:
+            multiplier += regime_delta
+            log.debug(
+                "alpha_regime_adjustment",
+                symbol=symbol,
+                regime=regime_key,
+                side=side,
+                delta=regime_delta,
+            )
 
         # Clip multiplier to reasonable bounds
         final_multiplier = max(0.5, min(1.5, multiplier))

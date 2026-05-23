@@ -43,6 +43,7 @@ dependencies = [
     # Backtesting
     "vectorbt>=0.26.2",
     "statsmodels>=0.14.6",
+    "composio>=0.13.1",
 ]
 
 [dependency-groups]
@@ -63,6 +64,7 @@ dev = [
     "pip-audit>=2.8.0",
     # Git hooks
     "pre-commit>=4.1.0",
+    "vulture>=2.16",
 ]
 
 [project.optional-dependencies]

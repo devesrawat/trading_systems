@@ -258,6 +258,15 @@ class TradingScheduler:
             replace_existing=True,
         )
 
+        # Hermes Wealth Architect — weekly scan (Saturday 09:00 IST)
+        self._scheduler.add_job(
+            func=self._safe(self._wealth_architect_scan),
+            trigger=CronTrigger(hour=9, minute=0, day_of_week="sat", timezone=_TZ_IST),
+            id="wealth_architect_weekly_scan",
+            name="Hermes Wealth Architect — weekly SIP candidate scan (Saturday 9 AM IST)",
+            replace_existing=True,
+        )
+
         # Phase 8: Quarterly hyperparameter optimization (1st of Q, 3 AM IST)
         # Q1: Jan 1, Q2: Apr 1, Q3: Jul 1, Q4: Oct 1
         for quarter_month, quarter_name in [(1, "Q1"), (4, "Q2"), (7, "Q3"), (10, "Q4")]:
@@ -611,6 +620,10 @@ class TradingScheduler:
 
         except Exception as exc:
             log.error("weekly_concept_drift_check_failed", error=str(exc))
+
+    def _wealth_architect_scan(self) -> None:
+        """Hermes Wealth Architect weekly scan — delegates to TradingSystem."""
+        self._system.run_wealth_scan()
 
     def _quarterly_hpo(self, quarter: str) -> None:
         """Phase 8: Quarterly hyperparameter optimization."""

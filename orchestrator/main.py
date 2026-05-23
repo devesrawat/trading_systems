@@ -1255,6 +1255,55 @@ class TradingSystem:
                     feature_map[symbol] = features
         return feature_map
 
+    # ------------------------------------------------------------------
+    # Hermes Wealth Architect — weekly scan
+    # ------------------------------------------------------------------
+
+    def run_wealth_scan(self) -> None:
+        """
+        Hermes Wealth Architect: screen the Nifty 50 universe for blue-chip
+        compounding candidates and send results to Telegram.
+
+        Criteria: PE < sector average AND ROE > 15%.
+        Reads fundamentals from Redis cache (key ``FUND:{symbol}``).
+        Symbols without cached data are skipped silently.
+
+        Scheduled: Saturday 09:00 IST via TradingScheduler.
+        """
+        try:
+            from signals.wealth_architect_scanner import WealthArchitectScanner
+
+            universe = self._equity_instruments or get_universe(segment="EQ")[:_TOP_N_EQUITY]
+            symbols = [i["symbol"] for i in universe]
+
+            scanner = WealthArchitectScanner()
+            candidates = scanner.run(symbols)
+
+            if not candidates:
+                msg = "Hermes Wealth Architect: no candidates passed PE/ROE filter this week."
+            else:
+                top3 = candidates[:3]
+                lines = ["Hermes Wealth Architect — Weekly SIP Candidates\n"]
+                for rank, c in enumerate(top3, start=1):
+                    lines.append(
+                        f"{rank}. {c['symbol']}  ROE={c['roe']}%  "
+                        f"PE={c['pe']} vs sector avg {c['sector_avg_pe']} "
+                        f"({c['pe_discount_pct']}% discount)  [{c['sector']}]"
+                    )
+                if len(candidates) > 3:
+                    lines.append(f"\n+{len(candidates) - 3} more passed the filter.")
+                msg = "\n".join(lines)
+
+            log.info(
+                "wealth_architect_scan_done",
+                total_candidates=len(candidates),
+                top3=[c["symbol"] for c in candidates[:3]],
+            )
+            self._send_alert(msg)
+
+        except Exception as exc:
+            log.error("wealth_architect_scan_failed", error=str(exc))
+
     def _check_model_drift(self) -> None:
         try:
             from monitoring.mlflow_tracker import ModelDriftMonitor

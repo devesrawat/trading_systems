@@ -5,7 +5,9 @@
 :icons: font
 :source-highlighter: highlight.js
 
-A walk-forward XGBoost signal model backed by FinBERT sentiment, connected to Zerodha Kite Connect, with hard risk guardrails enforced by a circuit breaker.
+A walk-forward XGBoost/LightGBM/PatchTST ensemble signal model backed by FinBERT sentiment, connected to Zerodha Kite Connect, with the Hermes dual-engine (Momentum Sentinel + Wealth Architect) and hard risk guardrails enforced by a circuit breaker.
+
+See link:../README.md[README.md] for the full usage guide and project overview.
 
 ---
 
@@ -18,7 +20,7 @@ A walk-forward XGBoost signal model backed by FinBERT sentiment, connected to Ze
 | Service | Purpose | Default address
 
 | TimescaleDB (PostgreSQL) | OHLCV data, trades, signals, audit log | `localhost:5432`
-| Redis | Tick cache, circuit-breaker state, access token | `localhost:6379`
+| Redis | Tick cache, circuit-breaker state, access token, fundamentals cache | `localhost:6379`
 | MLflow | Experiment tracking, model registry | `localhost:5001`
 |===
 
@@ -38,18 +40,18 @@ python -m data.store --init-schema
 
 === Python
 
-Requires Python ≥ 3.13. Install dependencies with `uv` (recommended) or `pip`:
+Requires Python ≥ 3.13. Install dependencies with `uv` (recommended):
 
 [source,bash]
 ----
 uv sync
-# or
-pip install -e ".[dev]"
+# For Upstox support:
+uv sync --extra upstox
 ----
 
 === Environment variables
 
-Copy the example file and fill in at minimum the three *REQUIRED* fields:
+Copy the example file and fill in the required fields:
 
 [source,bash]
 ----
@@ -63,6 +65,8 @@ KITE_API_SECRET=your_api_secret_here
 TIMESCALE_URL=postgresql://trader:password@localhost:5432/nse_trading
 REDIS_URL=redis://localhost:6379/0
 MLFLOW_TRACKING_URI=http://localhost:5001
+TELEGRAM_BOT_TOKEN=your_bot_token
+TELEGRAM_CHAT_ID=your_chat_id
 ----
 
 See link:env-variables.adoc[env-variables.adoc] for the full variable reference.
@@ -73,42 +77,52 @@ See link:env-variables.adoc[env-variables.adoc] for the full variable reference.
 
 === 1. Kite login
 
-The system needs a valid Kite access token before it can fetch market data or place orders. Run the login command once to generate and cache the first token:
-
 [source,bash]
 ----
 python -m data.ingest --login
 ----
 
-You will be redirected to the Zerodha login page in a browser. After authorising, the `request_token` from the redirect URL is exchanged for a session token and stored in Redis. Subsequent logins are handled automatically each morning at 08:45 IST.
+Opens a browser to Zerodha OAuth. After authorising, the session token is cached in Redis. Subsequent logins are handled automatically each morning at 08:45 IST.
 
 === 2. Initialise instrument universe
-
-Download NSE instrument metadata and persist it locally:
 
 [source,bash]
 ----
 python -m data.universe --refresh
 ----
 
-This fetches the instrument list from Kite Connect and writes it to the database. Re-run whenever NSE adds or removes instruments (typically at weekends).
+Downloads the NSE instrument list from Kite Connect. Re-run at weekends when NSE updates instruments.
 
 === 3. Backfill historical OHLCV
-
-Pull daily bars for the top 50 liquid instruments (approx. 3 years by default):
 
 [source,bash]
 ----
 python -m data.ingest --backfill --days 1095
 ----
 
-The backfill uses the current universe list and writes to the `ohlcv_daily` hypertable. This can take 10–20 minutes on first run.
+Pulls daily bars for the top 50 liquid instruments (≈3 years). Takes 10–20 minutes on first run.
+
+=== 4. Populate Wealth Architect fundamentals cache
+
+The conservative leg of Hermes requires per-symbol fundamentals in Redis:
+
+[source,python]
+----
+import json, redis
+r = redis.from_url("redis://localhost:6379/0")
+r.set("FUND:INFY", json.dumps({
+    "pe": 24.5, "roe": 29.0,
+    "sector": "IT", "sector_avg_pe": 28.0
+}))
+----
+
+Run this via the `fundamentals/` fetchers which populate `FUND:{symbol}` keys automatically.
 
 ---
 
 == Paper trading (recommended starting point)
 
-Paper mode is the default. Orders are logged to the `paper_trades` table and never sent to Kite.
+Paper mode is the default. Orders are logged to `paper_trades` and never sent to Kite.
 
 === Start the system
 
@@ -117,9 +131,16 @@ Paper mode is the default. Orders are logged to the `paper_trades` table and nev
 python -m orchestrator.main
 ----
 
-The scheduler starts and immediately logs the registered jobs. If it is not currently a market day or within trading hours, all scheduled jobs will fire at their next scheduled time. You can see the schedule in <<_daily_schedule>>.
+The scheduler starts and immediately logs registered jobs. Use `Ctrl+C` to stop.
 
-The process runs until interrupted with `Ctrl+C`.
+=== Market mode
+
+[source,bash]
+----
+python -m orchestrator.main --market equity   # NSE weekdays IST
+python -m orchestrator.main --market crypto   # Binance 24/7 UTC
+python -m orchestrator.main --market both     # both simultaneously
+----
 
 === Verify it is working
 
@@ -137,7 +158,7 @@ python -m signals.model --status
 
 === Accumulate paper trades
 
-The system logs every signal and every order to `paper_trades`. After 200 or more paper trades, review the metrics:
+After 200+ paper trades, review the metrics:
 
 [source,bash]
 ----
@@ -159,8 +180,6 @@ Live mode places real orders with real money. Do not enable it until:
 . Circuit breaker behaviour tested in paper mode (verify it halts correctly)
 ====
 
-=== Enable live trading
-
 In `.env`, set:
 
 [source,dotenv]
@@ -168,14 +187,53 @@ In `.env`, set:
 PAPER_TRADE_MODE=false
 ----
 
-Then restart the system:
+Then restart the system. The startup log emits `live_trading_mode_active` to confirm.
 
-[source,bash]
-----
-python -m orchestrator.main
-----
+---
 
-The startup log will emit `live_trading_mode_active` to confirm. Every order placed in live mode is written to `live_trades` for audit.
+== The Hermes Dual-Engine
+
+Hermes is the strategy layer with two legs operating concurrently.
+
+=== Leg 1: Momentum Sentinel (Aggressive)
+
+Scans for high-momentum breakout candidates. Runs as a `BaseStrategy` subclass (pure CPU — no I/O, no Redis) inside the `ScannerEngine` ProcessPoolExecutor.
+
+*Criteria:*
+
+* Close > SMA(50)
+* Volume > 2× 20-day average volume
+* RSI(14) > 60 (Wilder-smoothed)
+
+*Sort order:* highest `volume_ratio` first.
+
+=== Leg 2: Wealth Architect (Conservative)
+
+Weekly scan for blue-chip compounding candidates. Runs standalone (reads Redis — not allowed in worker processes).
+
+*Criteria:*
+
+* PE ratio < sector average PE (fallback cap: 25)
+* ROE > 15%
+
+*When it runs:* Saturday 09:00 IST. Top-3 candidates sent to Telegram.
+
+=== AlphaEngine (Composite Multiplier)
+
+Applies a scalar multiplier (0.5× – 1.5×) to the base model probability:
+
+[cols="1,1,1", options="header"]
+|===
+| Regime | BUY delta | SELL delta
+
+| `trending_bull` | +0.10 | −0.10
+| `trending_bear` | −0.30 | +0.10
+| `choppy`        | −0.20 | −0.10
+| `high_vol`      | −0.10 |  0.00
+| `normal`        |  0.00 |  0.00
+|===
+
+Final confidence = model probability × AlphaEngine multiplier.
 
 ---
 
@@ -187,25 +245,57 @@ All times are IST (Asia/Kolkata).
 |===
 | Time | Job | What it does
 
-| 08:30 (Mon only)
-| Weekly reset
-| Resets the weekly circuit-breaker baseline to current capital.
+| Mon 06:00
+| Concept drift check
+| KL divergence on last week's features vs. reference distribution
 
-| 08:45
+| Mon 08:30
+| Weekly CB reset
+| Resets the weekly circuit-breaker baseline to current capital
+
+| Mon–Fri 08:45
 | Pre-market setup
-| Refreshes Kite access token, runs FinBERT sentiment pipeline, loads latest model from MLflow registry.
+| Refreshes Kite token, runs FinBERT sentiment pipeline, loads latest model from MLflow
 
-| 09:15 – 15:25 (every 5 min)
+| Mon–Fri 09:15 – 15:25 (every 5 min)
 | Trading loop
-| Fetches features for the universe, scores with XGBoost, checks circuit breaker, sizes positions, places orders.
+| Scan → Signal → Risk gate → Order
 
-| 15:35
+| Mon–Fri 15:35
 | Post-market summary
-| Logs daily P&L and trade count via Telegram (if configured), checks for model drift.
+| Logs daily P&L, checks model drift
 
-| 02:00 (Sun only)
+| Mon–Fri 16:00
+| Daily reporting
+| Sends daily summary to Telegram
+
+| Fri 17:00
+| Weekly reporting
+| Sends weekly performance summary to Telegram
+
+| Fri 17:05
+| A/B test reporting
+| Champion vs. challenger comparison, promotion check
+
+| Sat 09:00
+| Wealth Architect scan
+| Conservative fundamental scan, sends top-3 SIP candidates to Telegram
+
+| Sun 02:00
 | Retrain check
-| Flags if live win rate has drifted below threshold; does not retrain automatically.
+| Flags win-rate drift; does not retrain automatically
+
+| 1st of month 02:00
+| Ensemble retraining
+| Walk-forward retrain: XGBoost + LightGBM + PatchTST
+
+| Jan/Apr/Jul/Oct 1 03:00
+| Quarterly HPO
+| Bayesian hyperparameter optimisation for ensemble models
+
+| Last day of month 17:00
+| Monthly reporting
+| Strategy rankings, multibagger candidates, P&L review
 |===
 
 ---
@@ -223,18 +313,18 @@ Uses walk-forward cross-validation (24-month train, 3-month test, 5-day purge ga
 
 === Register the model for production
 
-After reviewing the run in the MLflow UI (`http://localhost:5001`), promote the model to the `Production` stage:
+After reviewing the run in the MLflow UI (`http://localhost:5001`), promote the model:
 
 [source,bash]
 ----
 python -m signals.model --register --run-id <mlflow_run_id> --alias production
 ----
 
-The orchestrator loads the `production` model alias at each pre-market setup. The old model stays in the registry under its run ID for rollback.
+The orchestrator loads the `production` alias at each pre-market setup.
 
 === Retrain trigger
 
-The Sunday retrain check compares the live 30-day win rate against the backtest baseline. If drift exceeds the threshold (`_MIN_RETRAIN_WIN_RATE = 0.50` in `orchestrator/main.py`), a Telegram alert is sent. Retraining is manual — run the train command above and re-register.
+The Sunday retrain check compares the live 30-day win rate against the backtest baseline. If drift exceeds threshold, a Telegram alert is sent. Retraining is manual — run the train command and re-register.
 
 ---
 
@@ -267,7 +357,7 @@ Drawdown halts **never** auto-reset. After investigating the cause:
 python -m risk.breakers --reset
 ----
 
-This updates both daily and weekly baselines to current capital and clears the halt. An audit record is written to `circuit_events`. The weekly reset on Monday morning does *not* clear a halt — `--reset` must be called explicitly.
+This updates both daily and weekly baselines to current capital and clears the halt. An audit record is written to `circuit_events`. The Monday weekly reset does *not* clear a halt — `--reset` must be called explicitly.
 
 ---
 
@@ -295,16 +385,19 @@ uv run pytest tests/test_risk_breakers.py -v
 ----
 trading-system/
 ├── config/          Settings and .env loading (pydantic-settings)
-├── data/            Kite ingestor, TimescaleDB store, data cleaning, universe
-├── signals/         Feature engineering, XGBoost training, model registry
+├── data/            Kite/Upstox ingestor, TimescaleDB store, universe
+├── signals/         Feature engineering, strategies, AlphaEngine, WealthArchitect
 ├── llm/             FinBERT sentiment pipeline, Finnhub/NewsAPI fetchers
 ├── risk/            Circuit breaker, position sizer, portfolio monitor
 ├── execution/       Order executor (paper + live), trade logger
 ├── options/         F&O options model (Black-Scholes + IV surface)
 ├── backtest/        Walk-forward backtester, cost model, metrics
-├── monitoring/      Telegram alerter, MLflow drift tracker
+├── monitoring/      Telegram alerter, reporters (daily/weekly/monthly)
+├── audit/           Signal/trade/risk audit log (Redis, 30-day TTL)
 ├── orchestrator/    TradingSystem entry point, APScheduler jobs
+├── fundamentals/    Balance sheet / P&L fetchers for WealthArchitect cache
+├── portfolio/       Holdings tracker, sector concentration checks
 ├── migrations/      Alembic schema migrations
-├── tests/           Pytest unit tests (390+, 88 % coverage)
-└── docs/            This guide, env-variables reference
+├── tests/           Pytest unit tests (80%+ coverage, all mocked)
+└── docs/            This guide, env-variables reference, ARCHITECTURE.md
 ----
