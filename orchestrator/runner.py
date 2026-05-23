@@ -203,7 +203,7 @@ class OrchestratorRunner:
             # 5. Run ScannerEngine (called by TradingSystem.pre_market_setup via ScannerEngine)
             if self.trading_system._market_type in ("equity", "both"):
                 # Collect signals from trading_system's vcp_candidates (already scanned)
-                raw_results = self.trading_system._vcp_candidates
+                raw_results = self.trading_system._scan_candidates
 
                 # Normalize to Signal objects and store
                 self._pre_market_signals = []

@@ -164,7 +164,7 @@ def test_rsi_perfect_downtrend():
 
 
 def test_rsi_insufficient_data():
-    """Short series returns sentinel 50.0."""
+    """Short series returns sentinel 0.0."""
     closes = pd.Series([100.0, 101.0, 102.0])
     rsi = MomentumSentinelStrategy._rsi(closes, period=14)
-    assert rsi == 50.0
+    assert rsi == 0.0

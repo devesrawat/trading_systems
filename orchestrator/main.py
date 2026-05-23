@@ -22,13 +22,15 @@ Entry point:
 
 from __future__ import annotations
 
+import json
 import signal
 import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import suppress
-from datetime import datetime
+from datetime import date, datetime
 
+import numpy as np
 import pandas as pd
 import structlog
 
@@ -221,8 +223,17 @@ class TradingSystem:
         self._equity_universe: list[str] = []
         self._equity_instruments: list[dict] = []  # full instrument dicts (token + symbol)
         self._crypto_universe: list[str] = []
-        self._vcp_candidates: list[dict] = []
+        self._scan_candidates: list[dict] = []
+
+        # Load persisted open positions from Redis so restarts don't lose tracking
         self._open_positions: set[str] = set()
+        try:
+            members = get_redis().smembers(RedisKeys.OPEN_POSITIONS)
+            self._open_positions = set(members)
+            if self._open_positions:
+                log.info("positions_restored_from_redis", count=len(self._open_positions))
+        except Exception as _exc:
+            log.warning("position_restore_failed", error=str(_exc))
 
         # Cached capital — refreshed once per trading_loop to avoid per-symbol broker calls
         self._cached_capital: float = settings.initial_capital
@@ -243,8 +254,8 @@ class TradingSystem:
         log.info("pre_market_setup_start", market=self._market_type)
 
         # QUICK WIN 1: Clear prior session state to prevent memory accumulation
-        self._vcp_candidates.clear()
-        log.debug("state_cleared", cleared_vcp_candidates=len(self._vcp_candidates))
+        self._scan_candidates.clear()
+        log.debug("state_cleared", cleared_scan_candidates=len(self._scan_candidates))
 
         # 1. Refresh auth tokens (no-op for paper / Binance)
         try:
@@ -285,7 +296,7 @@ class TradingSystem:
                                     mode="research",  # Strategy scanner hits are research-mode by default
                                 )
                                 # Store as raw dicts for backward compatibility (to be phased out)
-                                self._vcp_candidates.append(result_dict)
+                                self._scan_candidates.append(result_dict)
                                 log.info(
                                     "strategy_signal_generated",
                                     signal_id=signal.signal_id,
@@ -306,10 +317,10 @@ class TradingSystem:
                     )
                 else:
                     log.warning("no_enabled_strategies_found")
-                    self._vcp_candidates = []
+                    self._scan_candidates = []
             except Exception as exc:
                 log.error("strategies_scan_failed", error=str(exc))
-                self._vcp_candidates = []
+                self._scan_candidates = []
 
         # 4. Run sentiment for equity universe
         if self._sentiment and self._equity_universe:
@@ -344,7 +355,7 @@ class TradingSystem:
             f"paper={settings.paper_trade_mode} | "
             f"capital={capital:,.0f} | "
             f"model={'OK' if self._model else 'MISSING'} | "
-            f"vcp_candidates={len(self._vcp_candidates)}"
+            f"scan_candidates={len(self._scan_candidates)}"
         )
         log.info("pre_market_setup_complete")
 
@@ -377,6 +388,11 @@ class TradingSystem:
             # Refresh capital once per loop — avoids per-symbol broker API round-trips
             with suppress(Exception):  # keep stale value from previous iteration on error
                 self._cached_capital = self._broker.get_balance() or settings.initial_capital
+
+            # Process time-based exits first (before scanning new entries)
+            if self._market_type in ("equity", "both"):
+                with suppress(Exception):
+                    self._process_exits()
 
             # Equity cycle — regime-gated; suppression does NOT block crypto
             if self._market_type in ("equity", "both"):
@@ -439,7 +455,6 @@ class TradingSystem:
             LLMSentimentEngine().generate_macro_briefing()
         except Exception as exc:
             log.error("macro_briefing_generation_failed", error=str(exc))
-        self._open_positions.clear()
         log.info("post_market_summary_complete")
 
     # ------------------------------------------------------------------
@@ -680,8 +695,9 @@ class TradingSystem:
                 transaction_type="BUY",
                 quantity=qty,
                 tag=f"crypto_xgb_{signal_prob:.2f}",
+                price=current_price,
             )
-            self._open_positions.add(symbol)
+            self._add_position(symbol, current_price, signal_prob, qty)
             log.info(
                 "crypto_order_placed",
                 symbol=symbol,
@@ -789,6 +805,87 @@ class TradingSystem:
             total_capital=self._monitor._initial_capital,
             cash_available=self._cached_capital - sum(p.market_value for p in positions.values()),
         )
+
+    # ------------------------------------------------------------------
+    # Position lifecycle helpers (Redis-backed, restart-safe)
+    # ------------------------------------------------------------------
+
+    def _add_position(
+        self, symbol: str, entry_price: float, entry_prob: float, quantity: int
+    ) -> None:
+        self._open_positions.add(symbol)
+        try:
+            r = get_redis()
+            r.sadd(RedisKeys.OPEN_POSITIONS, symbol)
+            r.hset(
+                RedisKeys.position_meta(symbol),
+                mapping={
+                    "entry_price": str(entry_price),
+                    "entry_date": date.today().isoformat(),
+                    "entry_prob": str(entry_prob),
+                    "quantity": str(quantity),
+                },
+            )
+        except Exception as exc:
+            log.warning("position_persist_failed", symbol=symbol, error=str(exc))
+
+    def _remove_position(self, symbol: str) -> None:
+        self._open_positions.discard(symbol)
+        try:
+            r = get_redis()
+            r.srem(RedisKeys.OPEN_POSITIONS, symbol)
+            r.delete(RedisKeys.position_meta(symbol))
+        except Exception as exc:
+            log.warning("position_remove_failed", symbol=symbol, error=str(exc))
+
+    def _process_exits(self) -> None:
+        """Exit positions held >= 5 business days (matches forward_days: 5 label)."""
+        today = date.today()
+        r = get_redis()
+        for symbol in list(self._open_positions):
+            try:
+                meta = r.hgetall(RedisKeys.position_meta(symbol))
+                if not meta:
+                    continue
+                entry_date_str = meta.get("entry_date")
+                if not entry_date_str:
+                    continue
+                entry_date = date.fromisoformat(entry_date_str)
+                elapsed = int(np.busday_count(entry_date.isoformat(), today.isoformat()))
+                if elapsed < 5:
+                    continue
+
+                qty = int(meta.get("quantity") or "0")
+
+                # Try to get current close from live day bar; fall back to 0.0
+                exit_price = 0.0
+                try:
+                    bar_raw = r.get(f"bar:day:{symbol}")
+                    if bar_raw:
+                        exit_price = float(json.loads(bar_raw).get("close") or 0.0)
+                except Exception:
+                    pass
+
+                if qty > 0:
+                    self._executor.place_market_order(
+                        symbol=symbol,
+                        transaction_type="SELL",
+                        quantity=qty,
+                        tag=f"exit_t5_{elapsed}d",
+                        price=exit_price,
+                    )
+                    log.info(
+                        "time_exit_executed",
+                        symbol=symbol,
+                        elapsed_bdays=elapsed,
+                        exit_price=exit_price,
+                    )
+                    self._send_alert(
+                        f"📤 EXIT {symbol} | held={elapsed} bdays | price={exit_price:,.2f}"
+                    )
+                self._remove_position(symbol)
+            except Exception as exc:
+                log.error("position_exit_error", symbol=symbol, error=str(exc))
 
     def _execute_legacy_signal(
         self,
@@ -919,8 +1016,9 @@ class TradingSystem:
                 transaction_type="BUY",
                 quantity=qty,
                 tag=f"xgb_{signal_prob:.2f}",
+                price=current_price,
             )
-            self._open_positions.add(symbol)
+            self._add_position(symbol, current_price, signal_prob, qty)
             log.info(
                 "order_placed",
                 symbol=symbol,
@@ -1040,8 +1138,9 @@ class TradingSystem:
                 transaction_type="BUY",
                 quantity=qty,
                 tag=f"signal_{signal.strategy_name}_{signal.confidence:.2f}",
+                price=current_price,
             )
-            self._open_positions.add(symbol)
+            self._add_position(symbol, current_price, signal.confidence, qty)
             log.info(
                 "signal_order_placed",
                 signal_id=signal.signal_id,

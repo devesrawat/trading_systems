@@ -85,7 +85,7 @@ def runner_mocked():
         mock_ts._equity_universe = ["RELIANCE.NS", "INFY.NS", "WIPRO.NS"]
         mock_ts._equity_instruments = []
         mock_ts._crypto_universe = []
-        mock_ts._vcp_candidates = []
+        mock_ts._scan_candidates = []
         mock_ts._open_positions = set()
         mock_ts._cached_capital = 500_000.0
         mock_ts._circuit_breaker = MagicMock()

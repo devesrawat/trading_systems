@@ -73,11 +73,11 @@ class MomentumSentinelStrategy(BaseStrategy):
     def _rsi(close: pd.Series, period: int = 14) -> float:
         """
         Wilder-smoothed RSI via EWM (alpha=1/period).
-        Returns 50.0 if insufficient data.
+        Returns 0.0 if insufficient data to stay strict.
         """
         delta = close.diff().dropna()
         if len(delta) < period:
-            return 50.0
+            return 0.0
         gain = delta.clip(lower=0)
         loss = (-delta).clip(lower=0)
         avg_gain = float(gain.ewm(alpha=1.0 / period, adjust=False).mean().iloc[-1])

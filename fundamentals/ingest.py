@@ -267,6 +267,21 @@ def store_in_cache(symbol: str, fundamentals_data: FundamentalsData, ttl_days: i
         except Exception as e:
             log.warning("cache_write_error", symbol=symbol, data_type="shareholding", error=str(e))
 
+    # Bridge for Wealth Architect Scanner
+    if fundamentals_data.valuations:
+        try:
+            wa_key = f"FUND:{symbol.upper()}"
+            wa_data = {
+                "pe": fundamentals_data.valuations.pe_ratio,
+                "roe": fundamentals_data.valuations.roe,
+                "sector": fundamentals_data.valuations.sector or "Unknown",
+                "sector_avg_pe": fundamentals_data.valuations.sector_avg_pe,
+            }
+            redis.setex(wa_key, ttl_seconds, json.dumps(wa_data))
+            log.info("cached_for_wealth_architect", symbol=symbol)
+        except Exception as e:
+            log.warning("wa_bridge_error", symbol=symbol, error=str(e))
+
 
 def store_in_db(symbol: str, fundamentals_data: FundamentalsData) -> None:
     """
