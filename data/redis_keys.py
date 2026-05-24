@@ -127,3 +127,14 @@ class RedisKeys:
     AUDIT_ORDERS: str = "trading:audit:orders"
     AUDIT_RISK_DECISIONS: str = "trading:audit:risk_decisions"
     AUDIT_CIRCUIT_BREAKER: str = "trading:audit:circuit_breaker"
+
+    # ------------------------------------------------------------------
+    # Open positions  (persistent — survives restarts)
+    # ------------------------------------------------------------------
+
+    OPEN_POSITIONS: str = "trading:positions:open"
+
+    @staticmethod
+    def position_meta(symbol: str) -> str:
+        """``trading:positions:meta:{symbol}`` — entry_price, entry_date, entry_prob, quantity."""
+        return f"trading:positions:meta:{symbol}"

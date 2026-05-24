@@ -455,6 +455,14 @@ class TradingSystem:
             LLMSentimentEngine().generate_macro_briefing()
         except Exception as exc:
             log.error("macro_briefing_generation_failed", error=str(exc))
+        try:
+            r = get_redis()
+            for symbol in list(self._open_positions):
+                r.srem(RedisKeys.OPEN_POSITIONS, symbol)
+                r.delete(RedisKeys.position_meta(symbol))
+        except Exception as exc:
+            log.warning("positions_redis_clear_failed", error=str(exc))
+        self._open_positions.clear()
         log.info("post_market_summary_complete")
 
     # ------------------------------------------------------------------

@@ -75,12 +75,14 @@ class OrderExecutor:
         transaction_type: str,
         quantity: int,
         tag: str,
+        price: float = 0.0,
         intraday: bool = True,
     ) -> str:
         """
         Place a market order. Returns order_id string.
 
         Validates circuit breaker, quantity, and transaction type before placing.
+        Pass ``price`` so paper trades record a meaningful entry/exit price.
         """
         self._validate_order(transaction_type, quantity)
         self._check_circuit_breaker()
@@ -90,12 +92,13 @@ class OrderExecutor:
             symbol=symbol,
             side=transaction_type,
             qty=quantity,
+            price=price,
             paper=self.paper_mode,
         )
 
         if self._broker.is_paper:
             order_id = f"{_PAPER_ORDER_PREFIX}_{uuid.uuid4().hex[:8].upper()}"
-            _write_paper_trade(symbol, transaction_type, quantity, price=0.0, tag=tag)
+            _write_paper_trade(symbol, transaction_type, quantity, price=price, tag=tag)
             return order_id
 
         order_id = self._broker.place_order(

@@ -130,6 +130,6 @@ strategies:
     lookback_days: 120
     params: {}
     risk_profile: default
-    mode: research
+    mode: paper
     schedule: null
     min_backtest_status: null

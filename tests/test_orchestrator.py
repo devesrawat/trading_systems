@@ -69,6 +69,9 @@ def _make_system(market_type: str = "equity", **settings_overrides) -> TradingSy
     mock_equity_provider = MagicMock()
     mock_crypto_provider = MagicMock()
 
+    mock_redis = MagicMock()
+    mock_redis.smembers.return_value = set()
+
     with (
         patch("orchestrator.main.settings", mock_settings),
         patch("orchestrator.main.get_provider", return_value=mock_equity_provider),
@@ -81,6 +84,7 @@ def _make_system(market_type: str = "equity", **settings_overrides) -> TradingSy
         patch("orchestrator.main.PortfolioMonitor", return_value=mock_monitor),
         patch("orchestrator.main.ModelRegistry", return_value=mock_registry),
         patch("llm.pipeline.SentimentPipeline", return_value=mock_sentiment),
+        patch("orchestrator.main.get_redis", return_value=mock_redis),
     ):
         system = TradingSystem(market_type=market_type)
 
