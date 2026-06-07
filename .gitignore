@@ -40,3 +40,9 @@ Thumbs.db
 # TLS certs
 deploy/nginx/certs/
 .models/
+
+# Graphify local state and cache
+graphify-out/.*
+graphify-out/cache/
+graphify-out/cost.json
+graphify-out/manifest.json
