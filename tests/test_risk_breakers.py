@@ -2,11 +2,23 @@
 
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from risk.breakers import CircuitBreaker
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def mock_circuit_event_async(request):
+    """Prevent background executor thread leakage in tests that do not test DB writes."""
+    if "TestWriteCircuitEvent" in request.node.nodeid:
+        yield
+    else:
+        with patch("risk.breakers.CircuitBreaker._write_circuit_event_async") as mock:
+            yield mock
 
 
 def _make_breaker(**kwargs) -> tuple[CircuitBreaker, MagicMock]:
@@ -273,6 +285,8 @@ class TestWriteCircuitEvent:
             patch("risk.breakers.get_engine", return_value=engine),
         ):
             cb.halt("daily drawdown exceeded")
+            if hasattr(cb, "_executor"):
+                cb._executor.shutdown(wait=True)
         conn.execute.assert_called_once()
         conn.commit.assert_called_once()
 
@@ -284,6 +298,8 @@ class TestWriteCircuitEvent:
             patch("risk.breakers.get_engine", return_value=engine),
         ):
             cb.reset_daily(current_capital=100_000.0)
+            if hasattr(cb, "_executor"):
+                cb._executor.shutdown(wait=True)
         conn.execute.assert_called_once()
 
     def test_reset_weekly_writes_circuit_event(self):
@@ -294,6 +310,8 @@ class TestWriteCircuitEvent:
             patch("risk.breakers.get_engine", return_value=engine),
         ):
             cb.reset_weekly(current_capital=95_000.0)
+            if hasattr(cb, "_executor"):
+                cb._executor.shutdown(wait=True)
         conn.execute.assert_called_once()
 
     def test_manual_reset_writes_circuit_event(self):
@@ -304,6 +322,8 @@ class TestWriteCircuitEvent:
             patch("risk.breakers.get_engine", return_value=engine),
         ):
             cb.manual_reset(current_capital=100_000.0)
+            if hasattr(cb, "_executor"):
+                cb._executor.shutdown(wait=True)
         conn.execute.assert_called_once()
 
     def test_db_error_does_not_propagate(self):

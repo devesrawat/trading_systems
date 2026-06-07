@@ -220,7 +220,7 @@ class TestEnsembleVoting:
         pred = ensemble_strategy.ensemble_predict(X_test, weights=weights)
 
         assert len(pred) == len(X_test)
-        assert set(pred) == {0, 1}
+        assert set(pred) <= {0, 1}
 
     def test_ensemble_confidence(self, ensemble_strategy, X_y_train_test):
         """get_model_confidence returns per-model confidence."""

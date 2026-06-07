@@ -230,9 +230,9 @@ class WalkForwardEnsembleTrainer:
                     best_params = self._optimize_hyperparams(X_train, y_train, X_val, y_val)
                 else:
                     best_params = {
-                        "xgb": None,
-                        "lgb": None,
-                        "patchtst": None,
+                        "xgb": {},
+                        "lgb": {},
+                        "patchtst": {},
                     }
 
                 # Train base models
@@ -266,7 +266,7 @@ class WalkForwardEnsembleTrainer:
 
                 self._fold_results.append(result)
 
-                mlflow.log_params(best_params.get("xgb", {}))
+                mlflow.log_params(best_params.get("xgb") or {})
                 mlflow.log_metrics(
                     {
                         "ensemble_auc": ensemble_auc,
@@ -288,7 +288,7 @@ class WalkForwardEnsembleTrainer:
         report.fold_results = self._fold_results
         report.total_folds = len(self._fold_results)
         report.n_retrains = self._n_retrains
-        report.aggregate_auc = np.mean([r.ensemble_auc for r in self._fold_results])
+        report.aggregate_auc = float(np.mean([r.ensemble_auc for r in self._fold_results]))
         report.drift_history = self.drift_detector.get_drift_history()
 
         log.info(

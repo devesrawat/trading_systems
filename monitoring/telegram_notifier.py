@@ -438,6 +438,17 @@ class TelegramNotifier:
         else:
             self._send_with_rate_limit(f"error_{module}", msg)
 
+    def send_message(self, message: str) -> None:
+        """
+        Send generic message to Telegram.
+
+        Parameters
+        ----------
+        message : str
+            Message text to send.
+        """
+        self._send(message)
+
     # ------------------------------------------------------------------
     # Batch updates
     # ------------------------------------------------------------------

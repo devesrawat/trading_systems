@@ -548,10 +548,30 @@ class TradingScheduler:
                 experiment_name="ensemble_monthly_retrain",
             )
 
+            # Fetch historical data
+            import pandas as pd
+
+            from data.store import get_engine
+            from signals.features import FEATURE_COLUMNS
+
+            engine = get_engine()
+            df = pd.read_sql(
+                "SELECT * FROM ohlcv WHERE time >= :start_date AND time <= :end_date ORDER BY time",
+                engine,
+                params={"start_date": train_start, "end_date": train_end},
+                parse_dates=["time"],
+                index_col="time",
+            )
+
+            if len(df) < 500:
+                log.warning("monthly_ensemble_retrain_skipped_insufficient_data")
+                return
+
             # Run walk-forward training
             report = trainer.run_walk_forward(
-                symbols=["INFY", "TCS", "RELIANCE", "HDFCBANK", "ICICIBANK"],
-                date_range=(train_start.strftime("%Y-%m-%d"), train_end.strftime("%Y-%m-%d")),
+                df=df,
+                features=FEATURE_COLUMNS,
+                label="label",
             )
 
             log.info(
@@ -576,12 +596,12 @@ class TradingScheduler:
     def _weekly_concept_drift_check(self) -> None:
         """Phase 8: Weekly concept drift detection (Monday 6 AM IST)."""
         try:
+            from monitoring.drift_detector import ConceptDriftDetector
             from monitoring.telegram_notifier import TelegramNotifier
-            from signals.training.concept_drift import ConceptDriftDetector
 
             log.info("weekly_concept_drift_check_started")
 
-            detector = ConceptDriftDetector(threshold=0.5)
+            detector = ConceptDriftDetector()
 
             # Fetch latest data
             import pandas as pd
@@ -645,7 +665,7 @@ class TradingScheduler:
             log.info("quarterly_hpo_started", quarter=quarter)
 
             # Run Bayesian optimization
-            optimizer = BayesianHyperparameterOptimizer(n_trials=20, warm_start=True)
+            optimizer = BayesianHyperparameterOptimizer(experiment_name="quarterly_hpo_" + quarter)
 
             # Use last 2 years of data for HPO
             import pandas as pd
@@ -669,10 +689,24 @@ class TradingScheduler:
                 log.warning("quarterly_hpo_skipped_insufficient_data")
                 return
 
-            _, history = optimizer.optimize(
-                X=df[FEATURE_COLUMNS],
-                y=df.get("label", pd.Series([0] * len(df))),
+            # Split data temporally: last 6 months for validation, prior 18 months for training
+            split_date = now - timedelta(days=180)
+            train_df = df[df.index < split_date]
+            val_df = df[df.index >= split_date]
+
+            X_train = train_df[FEATURE_COLUMNS]
+            y_train = train_df.get("label", pd.Series([0] * len(train_df)))
+            X_val = val_df[FEATURE_COLUMNS]
+            y_val = val_df.get("label", pd.Series([0] * len(val_df)))
+
+            optimizer.optimize(
+                X_train=X_train,
+                y_train=y_train,
+                X_val=X_val,
+                y_val=y_val,
+                n_trials=20,
             )
+            history = optimizer.optimization_history
 
             log.info(
                 "quarterly_hpo_complete",

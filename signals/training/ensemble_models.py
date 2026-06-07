@@ -431,9 +431,16 @@ class EnsembleStrategy:
             self._xgb_model.load_model(str(input_dir / "xgb_model.bin"))
 
         if (input_dir / "lgb_model.txt").exists():
+            from sklearn.preprocessing import LabelEncoder
+
             booster = lgb.Booster(model_file=str(input_dir / "lgb_model.txt"))
             self._lgb_model = lgb.LGBMClassifier()
-            self._lgb_model.booster_ = booster
+            self._lgb_model._Booster = booster
+            self._lgb_model.fitted_ = True
+            self._lgb_model._n_features_in = booster.num_feature()
+            self._lgb_model._classes = np.array([0, 1])
+            self._lgb_model._n_classes = 2
+            self._lgb_model._le = LabelEncoder().fit(self._lgb_model._classes)
 
         if (input_dir / "patchtst_model.pkl").exists():
             self._patchtst_model = PatchTSTWrapper.load(input_dir / "patchtst_model.pkl")
@@ -613,7 +620,8 @@ class PatchTSTWrapper:
 
     def save(self, path: Path | str) -> None:
         """Save model to pickle file."""
-        import pickle
+        # Safe: file written by this process; path is a local model directory, not user-supplied.
+        import pickle  # nosec B403
 
         with open(path, "wb") as f:
             pickle.dump(self._model, f)
@@ -621,10 +629,11 @@ class PatchTSTWrapper:
     @staticmethod
     def load(path: Path | str) -> PatchTSTWrapper:
         """Load model from pickle file."""
-        import pickle
+        # Safe: only loads files previously saved by save() in the same controlled model directory.
+        import pickle  # nosec B403
 
         with open(path, "rb") as f:
-            model = pickle.load(f)
+            model = pickle.load(f)  # nosec B301
 
         wrapper = PatchTSTWrapper(n_features=1)
         wrapper._model = model
