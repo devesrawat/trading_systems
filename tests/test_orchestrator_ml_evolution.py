@@ -200,16 +200,21 @@ class TestABTesting:
     """Test A/B testing orchestration."""
 
     def test_ab_test_route_signal_50_50(self, ab_test_orchestrator):
-        """Route signals 50/50 to champion/challenger."""
-        routes = {}
-        for _ in range(100):
-            route = ab_test_orchestrator.route_signal_to_model("INFY")
+        """Route signals roughly 50/50 across a diverse symbol set.
+
+        Routing is deterministic per (symbol, date) — same symbol on the same
+        day always goes to the same model, which is correct for A/B consistency.
+        Diversity across symbols produces the expected ~50/50 aggregate split.
+        """
+        symbols = [f"SYM{i:03d}" for i in range(100)]
+        routes: dict[str, int] = {}
+        for sym in symbols:
+            route = ab_test_orchestrator.route_signal_to_model(sym)
             routes[route] = routes.get(route, 0) + 1
 
-        # Should have both champion and challenger
         assert "champion" in routes
         assert "challenger" in routes
-        # Roughly 50/50 split
+        # MD5 hash of 100 diverse symbols should split roughly 50/50
         assert 30 < routes["champion"] < 70
         assert 30 < routes["challenger"] < 70
 

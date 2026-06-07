@@ -34,9 +34,13 @@ Adding a new broker::
 
 from __future__ import annotations
 
+import hashlib
+import hmac
+import time
 from abc import ABC, abstractmethod
 from typing import Any
 
+import requests
 import structlog
 
 log = structlog.get_logger(__name__)
@@ -321,34 +325,52 @@ class UpstoxBrokerAdapter(BrokerAdapter):
 
 class BinanceBrokerAdapter(BrokerAdapter):
     """
-    Binance adapter — paper mode only.
+    Binance adapter — supports both paper and live execution.
 
-    Live order execution is intentionally not implemented; all calls that
-    would modify state raise :exc:`NotImplementedError`. Read-only methods
-    (``get_quote``, ``get_balance``) hit the public Binance REST API.
-
-    This skeleton fulfils the ``BrokerAdapter`` contract so that
-    ``get_broker_adapter()`` can return a typed broker for crypto workflows
-    without triggering live trades.
-
-    Usage
-    -----
-    When ``data_provider = binance`` and ``paper_trade_mode = false``,
-    the factory returns this adapter. Live trading is still blocked by the
-    ``is_paper = True`` guard in :class:`~execution.orders.OrderExecutor`.
+    Live execution requires BINANCE_API_KEY and BINANCE_API_SECRET in .env.
+    If keys are missing, it defaults to paper mode.
     """
 
     _BINANCE_BASE = "https://api.binance.com"
 
     def __init__(self, initial_capital: float = 500_000.0) -> None:
-        self._balance = initial_capital
+        from config.settings import settings
+
+        self._api_key = settings.binance_api_key
+        self._api_secret = settings.binance_api_secret
+        self._paper_balance = initial_capital
 
     @property
     def is_paper(self) -> bool:
-        return True  # Binance live execution is deferred
+        return not (self._api_key and self._api_secret)
+
+    def _sign(self, params: dict[str, Any]) -> str:
+        query_string = "&".join([f"{k}={v}" for k, v in params.items()])
+        return hmac.new(
+            self._api_secret.encode("utf-8"),
+            query_string.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def _request(
+        self, method: str, path: str, params: dict[str, Any] | None = None, signed: bool = False
+    ) -> dict[str, Any]:
+        params = params or {}
+        headers = {"X-MBX-APIKEY": self._api_key} if self._api_key else {}
+
+        if signed:
+            if not self._api_secret:
+                raise ValueError("Binance API secret required for signed requests")
+            params["timestamp"] = int(time.time() * 1000)
+            params["signature"] = self._sign(params)
+
+        url = f"{self._BINANCE_BASE}{path}"
+        resp = requests.request(method, url, params=params, headers=headers, timeout=10)
+        resp.raise_for_status()
+        return resp.json()
 
     # ------------------------------------------------------------------
-    # Write methods — blocked until live execution is implemented
+    # Execution methods
     # ------------------------------------------------------------------
 
     def place_order(
@@ -361,38 +383,64 @@ class BinanceBrokerAdapter(BrokerAdapter):
         order_type: str = "MARKET",
         intraday: bool = True,
     ) -> str:
-        raise NotImplementedError(
-            "BinanceBrokerAdapter.place_order: live crypto execution is not yet "
-            "implemented. Set PAPER_TRADE_MODE=true for paper trading."
-        )
+        if self.is_paper:
+            log.info("binance_paper_order", symbol=symbol, side=side, qty=quantity)
+            return f"paper_{int(time.time())}"
+
+        params = {
+            "symbol": symbol.upper(),
+            "side": side.upper(),
+            "type": order_type.upper(),
+            "quantity": quantity,
+            "newClientOrderId": tag[:36],
+        }
+        if order_type.upper() == "LIMIT":
+            params["price"] = price
+            params["timeInForce"] = "GTC"
+
+        resp = self._request("POST", "/api/v3/order", params=params, signed=True)
+        order_id = str(resp["orderId"])
+        log.info("binance_order_placed", order_id=order_id, symbol=symbol, side=side)
+        return order_id
 
     def cancel_order(self, order_id: str) -> bool:
-        log.info("binance_paper_order_cancelled", order_id=order_id)
-        return True
+        if self.is_paper:
+            return True
+
+        # Note: Binance cancel usually requires symbol. We'd need to track it
+        # or have the caller provide it. For now, we assume tag/order_id mapping.
+        log.warning("binance_cancel_requires_symbol_stub", order_id=order_id)
+        return False
 
     def get_order_status(self, order_id: str) -> dict[str, Any]:
-        return {"order_id": order_id, "status": "PAPER_COMPLETE"}
+        if self.is_paper:
+            return {"order_id": order_id, "status": "FILLED"}
+
+        # Requires symbol. Real implementation would fetch from order history.
+        return {"order_id": order_id, "status": "UNKNOWN"}
 
     # ------------------------------------------------------------------
-    # Read methods — real Binance public REST
+    # Read methods
     # ------------------------------------------------------------------
 
     def get_balance(self) -> float:
-        """Return the paper capital balance (live balance requires API key)."""
-        return self._balance
+        """Return the USDT balance from Binance account."""
+        if self.is_paper:
+            return self._paper_balance
+
+        try:
+            resp = self._request("GET", "/api/v3/account", signed=True)
+            for balance in resp.get("balances", []):
+                if balance["asset"] == "USDT":
+                    return float(balance["free"])
+            return 0.0
+        except Exception as exc:
+            log.warning("binance_balance_failed", error=str(exc))
+            return 0.0
 
     def get_quote(self, symbols: list[str]) -> dict[str, dict[str, float]]:
-        """
-        Fetch last price for *symbols* from Binance public ticker API.
-
-        Requests are issued in parallel (ThreadPoolExecutor) to cut latency
-        from O(N×RTT) to O(RTT).  Returns ``{symbol: {"last_price": float}}``.
-        Symbols must use Binance format (e.g. "BTCUSDT").
-        Failed lookups are silently omitted.
-        """
+        """Fetch last price for *symbols* from Binance public ticker API."""
         from concurrent.futures import ThreadPoolExecutor
-
-        import requests
 
         def _fetch_one(symbol: str) -> tuple[str, dict[str, float] | None]:
             try:

@@ -7,6 +7,7 @@ after 200+ paper trades and go-live checklist completion.
 
 from __future__ import annotations
 
+import os
 import uuid
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
@@ -57,13 +58,30 @@ class OrderExecutor:
     ) -> None:
         self._broker = broker
         self._cb = circuit_breaker
+        self._live_confirmed = (
+            os.environ.get("PRODUCTION_LIVE_CONFIRMED", "false").lower() == "true"
+        )
+
         if not broker.is_paper:
-            log.warning("live_trading_mode_active", adapter=type(broker).__name__)
+            if not self._live_confirmed:
+                log.critical(
+                    "LIVE_MODE_BLOCKED_BY_SAFETY_GUARD",
+                    reason="PRODUCTION_LIVE_CONFIRMED env var not set to 'true'",
+                )
+            else:
+                log.warning("LIVE_TRADING_MODE_ACTIVE", adapter=type(broker).__name__)
 
     @property
     def paper_mode(self) -> bool:
         """True when the underlying broker adapter is in paper mode."""
         return self._broker.is_paper
+
+    def _check_live_safety(self) -> None:
+        """Raise error if broker is live but safety guard is missing."""
+        if not self._broker.is_paper and not self._live_confirmed:
+            raise RuntimeError(
+                "CRITICAL: System attempted LIVE trade but PRODUCTION_LIVE_CONFIRMED is not true."
+            )
 
     # ------------------------------------------------------------------
     # place_market_order
@@ -86,6 +104,7 @@ class OrderExecutor:
         """
         self._validate_order(transaction_type, quantity)
         self._check_circuit_breaker()
+        self._check_live_safety()
 
         log.info(
             "placing_market_order",
@@ -133,6 +152,7 @@ class OrderExecutor:
         if price <= 0:
             raise ValueError(f"price must be positive, got {price}")
         self._check_circuit_breaker()
+        self._check_live_safety()
 
         log.info(
             "placing_limit_order",

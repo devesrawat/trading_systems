@@ -44,6 +44,7 @@ dependencies = [
     "vectorbt>=0.26.2",
     "statsmodels>=0.14.6",
     "composio>=0.13.1",
+    "pyotp>=2.9.0",
 ]
 
 [dependency-groups]

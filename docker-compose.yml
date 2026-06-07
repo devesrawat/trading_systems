@@ -85,6 +85,7 @@ services:
         --host 0.0.0.0
         --backend-store-uri sqlite:///mlflow.db
         --default-artifact-root /mlflow/artifacts
+        --allowed-hosts "mlflow,mlflow:5000,localhost,localhost:5000,127.0.0.1"
     volumes:
       - mlflow_data:/mlflow
 
@@ -108,6 +109,8 @@ services:
     command: python -m orchestrator.main
     restart: unless-stopped
     env_file: .env
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
     ports:
       - "8000:8000"   # Prometheus metrics endpoint (monitoring/grafana_exporter.py)
     depends_on:
@@ -117,43 +120,13 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      mlflow:
+        condition: service_started
     logging:
       driver: "json-file"
       options:
         max-size: "50m"
         max-file: "5"
-
-  scanner:
-    build: .
-    command: python -m signals.scanner_engine
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      timescaledb:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "3"
-
-  live-feed:
-    build: .
-    command: python -m data.live_feed
-    restart: unless-stopped
-    env_file: .env
-    depends_on:
-      redis:
-        condition: service_healthy
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "3"
 
 volumes:
   timescale_data:

@@ -30,17 +30,18 @@ class TestBinanceBrokerAdapter:
     def test_get_balance(self):
         assert self._make(500_000).get_balance() == 500_000.0
 
-    def test_place_order_raises(self):
+    def test_place_order_paper_returns_id(self):
         adapter = self._make()
-        with pytest.raises(NotImplementedError):
-            adapter.place_order("BTCUSDT", "BUY", 1, "test")
+        order_id = adapter.place_order("BTCUSDT", "BUY", 1, "test")
+        assert isinstance(order_id, str)
+        assert order_id.startswith("paper_")
 
     def test_cancel_order_paper_noop(self):
         assert self._make().cancel_order("fake_id") is True
 
     def test_get_order_status_paper(self):
         status = self._make().get_order_status("o123")
-        assert status["status"] == "PAPER_COMPLETE"
+        assert status["status"] == "FILLED"
 
     def test_get_quote_success(self):
         mock_resp = MagicMock()

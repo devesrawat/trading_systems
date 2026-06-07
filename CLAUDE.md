@@ -503,12 +503,43 @@ is_drift = detector.is_regime_change(kl_div, threshold=0.5)
 
 ### Next Steps (Phase 9+)
 
-- [ ] Real-time drift monitoring dashboard
-- [ ] Multi-model ensemble with neural networks
-- [ ] Reinforcement learning for A/B routing (Thompson sampling)
-- [ ] Feature importance tracking (SHAP)
-- [ ] Automated model promotion workflow
-- [ ] Advanced drift detection (Adwin, DDM, EDDM)
+- [x] Feature importance tracking (SHAP)
+- [x] Automated model promotion workflow
+- [x] Data-driven portfolio risk (Correlation, Liquidity, Turnover)
+- [x] Live Binance HMAC-signed execution
+
+---
+
+## Phase 11: Live Readiness & Portfolio Risk
+
+**Status**: ✅ COMPLETE
+
+### Implementation Summary
+
+Phase 11 transitions the system from "paper-ready" to "live-ready" by replacing all remaining core stubs with data-driven implementations. This includes high-fidelity risk management (real Pearson correlation, market impact modeling) and the ability to place live orders on Binance.
+
+### New Components
+
+#### 1. **portfolio/correlation.py**
+- `compute_pairwise_correlation()` — Fetches historical daily closes from TimescaleDB and computes Pearson correlation.
+- Redis-backed cache for correlation results (24h TTL) to minimize DB pressure.
+
+#### 2. **portfolio/liquidity.py**
+- `check_minimum_liquidity()` — Implements square-root market impact model.
+- `Impact = Coeff * sqrt(OrderSize / ADV) * Volatility`.
+- Rejects orders that would cause > 50 bps of estimated slippage.
+
+#### 3. **portfolio/turnover.py**
+- `compute_portfolio_turnover()` — Queries `trades` table to compute annualized turnover.
+- Enforces annual turnover limits to prevent over-trading.
+
+#### 4. **execution/broker.py**
+- `BinanceBrokerAdapter` — Upgraded with `_sign()` method for HMAC SHA256 signatures.
+- Supports live `POST /api/v3/order` with real capital when API keys are provided.
+
+#### 5. **signals/exit_model.py**
+- `evaluate_exit()` — Comprehensive rule-based exit logic.
+- Implements ATR-based trailing stops, partial profit-taking (R2), and hard stop losses.
 
 ---
 

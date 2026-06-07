@@ -146,6 +146,10 @@ class TradingSystem:
             self._equity_provider = get_provider()
             self._crypto_provider = None
 
+        # Restore Kite access token from Redis (written by daily refresh job).
+        # Redis is authoritative; .env is only the bootstrap seed.
+        self._restore_kite_token_from_redis()
+
         # ------------------------------------------------------------------
         # Broker adapter (paper, Kite, Upstox, or Binance paper)
         # ------------------------------------------------------------------
@@ -1445,6 +1449,49 @@ class TradingSystem:
         except Exception as exc:
             log.debug("feature_drift_check_skipped", error=str(exc))
 
+    def _restore_kite_token_from_redis(self) -> None:
+        """Apply the Redis-persisted Kite token to the live provider instance."""
+        if settings.data_provider.lower() != "kite" or self._equity_provider is None:
+            return
+        try:
+            from data.providers.kite import KiteProvider
+
+            if not isinstance(self._equity_provider, KiteProvider):
+                return
+            r = get_redis()
+            raw = r.get(RedisKeys.KITE_ACCESS_TOKEN)
+            if not raw:
+                return
+            token = raw if isinstance(raw, str) else raw.decode()
+            self._equity_provider.ingestor.kite.set_access_token(token)
+            log.info("kite_token_restored_from_redis")
+        except Exception as exc:
+            log.warning("kite_token_restore_failed", error=str(exc))
+
+    def _refresh_kite_token(self) -> None:
+        """Automated Kite access-token refresh via headless web login (TOTP)."""
+        if settings.data_provider.lower() != "kite":
+            return
+        if not (settings.kite_user_id and settings.kite_password and settings.kite_totp_secret):
+            log.warning("kite_token_refresh_skipped", reason="missing_credentials")
+            return
+
+        from data.kite_auth import fetch_request_token
+        from data.providers.kite import KiteProvider
+
+        if not isinstance(self._equity_provider, KiteProvider):
+            log.debug("kite_token_refresh_skipped", reason="not_kite_provider")
+            return
+
+        request_token = fetch_request_token(
+            api_key=settings.kite_api_key,
+            user_id=settings.kite_user_id,
+            password=settings.kite_password,
+            totp_secret=settings.kite_totp_secret,
+        )
+        self._equity_provider.refresh_access_token(request_token)
+        log.info("kite_token_refreshed")
+
     def _send_alert(self, message: str) -> None:
         try:
             from monitoring.alerts import TelegramAlerter
@@ -1461,6 +1508,7 @@ class TradingSystem:
 
 def main() -> None:
     import argparse
+    import os
 
     parser = argparse.ArgumentParser(description="NSE + Crypto Trading System")
     parser.add_argument(
@@ -1469,7 +1517,26 @@ def main() -> None:
         default=settings.market_type,
         help="Market to trade (default: from MARKET_TYPE env var)",
     )
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        default=False,
+        help="Enable live trading. Requires PRODUCTION_LIVE_CONFIRMED=true and PAPER_TRADE_MODE=false.",
+    )
     args = parser.parse_args()
+
+    if args.live:
+        if os.environ.get("PRODUCTION_LIVE_CONFIRMED") != "true":
+            parser.error(
+                "Live trading requires PRODUCTION_LIVE_CONFIRMED=true set in the environment. "
+                "This safety gate is non-negotiable."
+            )
+        settings.paper_trade_mode = False
+        log.warning(
+            "live_trading_enabled",
+            capital=settings.initial_capital,
+            market=args.market,
+        )
 
     system = TradingSystem(market_type=args.market)
     scheduler = None

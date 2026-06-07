@@ -19,7 +19,7 @@ from kiteconnect import KiteConnect, KiteTicker
 from config.settings import settings
 from data.providers.base import OHLCVProvider
 from data.redis_keys import RedisKeys
-from data.store import get_redis, write_ohlcv, write_tick
+from data.store import get_redis, write_ohlcv, write_ticks_batch
 
 log = structlog.get_logger(__name__)
 
@@ -127,8 +127,7 @@ class KiteIngestor:
         self._reconnect_count = 0
 
         def on_ticks(ws: KiteTicker, ticks: list[dict]) -> None:
-            for tick in ticks:
-                write_tick(tick["instrument_token"], tick)
+            write_ticks_batch(ticks)
             if on_tick_extra:
                 on_tick_extra(ticks)
 

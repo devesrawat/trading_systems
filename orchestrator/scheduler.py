@@ -83,6 +83,15 @@ class TradingScheduler:
     def _register_equity_jobs(self) -> None:
         s = self._system
 
+        # Kite access-token refresh — 08:30 IST (15 min before pre-market setup)
+        self._scheduler.add_job(
+            func=self._safe(s._refresh_kite_token),
+            trigger=CronTrigger(hour=8, minute=30, day_of_week="mon-fri", timezone=_TZ_IST),
+            id="kite_token_refresh",
+            name="Kite daily access-token refresh",
+            replace_existing=True,
+        )
+
         # Pre-market setup — 08:45 IST every weekday
         self._scheduler.add_job(
             func=self._safe(s.pre_market_setup),

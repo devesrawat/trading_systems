@@ -34,7 +34,8 @@ def _live_executor() -> tuple[OrderExecutor, MagicMock]:
     }
     mock_cb = MagicMock()
     mock_cb.is_halted.return_value = False
-    executor = OrderExecutor(broker=mock_broker, circuit_breaker=mock_cb)
+    with patch.dict("os.environ", {"PRODUCTION_LIVE_CONFIRMED": "true"}):
+        executor = OrderExecutor(broker=mock_broker, circuit_breaker=mock_cb)
     return executor, mock_broker
 
 
@@ -85,7 +86,8 @@ class TestPlaceMarketOrder:
         mock_cb = MagicMock()
         mock_cb.is_halted.return_value = True
         mock_cb._halt_reason = "daily drawdown exceeded"
-        executor = OrderExecutor(broker=mock_broker, circuit_breaker=mock_cb)
+        with patch.dict("os.environ", {"PRODUCTION_LIVE_CONFIRMED": "true"}):
+            executor = OrderExecutor(broker=mock_broker, circuit_breaker=mock_cb)
         with pytest.raises(RuntimeError, match="circuit breaker"):
             executor.place_market_order("RELIANCE", "BUY", quantity=10, tag="test")
 

@@ -17,6 +17,10 @@ class Settings(BaseSettings):
     kite_api_key: str = ""
     kite_api_secret: str = ""
     kite_access_token: str | None = None
+    # Automated daily token refresh (headless web login)
+    kite_user_id: str | None = None
+    kite_password: str | None = None
+    kite_totp_secret: str | None = None  # base32 seed from 2FA setup
 
     # Upstox v2
     upstox_api_key: str | None = None

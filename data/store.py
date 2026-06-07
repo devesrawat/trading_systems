@@ -234,6 +234,22 @@ def write_tick(token: int, tick: dict[str, Any]) -> None:
     r.setex(RedisKeys.tick(token), _TICK_TTL_SECONDS, json.dumps(tick))
 
 
+def write_ticks_batch(ticks: list[dict[str, Any]]) -> None:
+    """
+    Cache multiple live ticks in Redis using a pipeline.
+    Significantly more efficient than individual setex calls for bulk data.
+    """
+    if not ticks:
+        return
+    r = get_redis()
+    with r.pipeline() as pipe:
+        for tick in ticks:
+            token = tick.get("instrument_token")
+            if token:
+                pipe.setex(RedisKeys.tick(token), _TICK_TTL_SECONDS, json.dumps(tick))
+        pipe.execute()
+
+
 # ---------------------------------------------------------------------------
 # Crypto tick cache  (separate namespace from NSE integer tokens)
 # ---------------------------------------------------------------------------
@@ -254,6 +270,20 @@ def write_crypto_tick(symbol: str, tick: dict[str, Any]) -> None:
     """Cache a live crypto tick in Redis with a short TTL."""
     r = get_redis()
     r.setex(RedisKeys.crypto_tick(symbol), _CRYPTO_TICK_TTL_SECONDS, json.dumps(tick))
+
+
+def write_crypto_ticks_batch(ticks: dict[str, dict[str, Any]]) -> None:
+    """
+    Cache multiple live crypto ticks in Redis using a pipeline.
+    Expects a dict of {symbol: tick_data}.
+    """
+    if not ticks:
+        return
+    r = get_redis()
+    with r.pipeline() as pipe:
+        for symbol, tick in ticks.items():
+            pipe.setex(RedisKeys.crypto_tick(symbol), _CRYPTO_TICK_TTL_SECONDS, json.dumps(tick))
+        pipe.execute()
 
 
 # ---------------------------------------------------------------------------

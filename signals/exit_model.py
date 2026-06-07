@@ -65,19 +65,6 @@ class ExitModel:
         self._model = None
         self._tracking_uri = tracking_uri
 
-    # ------------------------------------------------------------------
-    # Rule-based exits
-    # ------------------------------------------------------------------
-
-    def should_exit(self, ctx: PositionContext, current_price: float | None = None) -> bool:
-        """
-        Convenience wrapper: return True if any rule-based exit condition is met.
-
-        Uses `ctx.current_price` if `current_price` is not provided.
-        """
-        price = current_price if current_price is not None else ctx.current_price
-        return self.should_partial_exit(ctx, price) or self.should_trailing_stop(ctx, price)
-
     def should_partial_exit(self, ctx: PositionContext, current_price: float) -> bool:
         """Return True when price has risen 2× ATR from entry (partial profit target)."""
         if ctx.atr_at_entry <= 0:
@@ -96,6 +83,36 @@ class ExitModel:
             return False
         stop_level = ctx.high_water_mark - _TRAILING_STOP_R * ctx.atr_at_entry
         return current_price <= stop_level
+
+    def should_exit(self, ctx: PositionContext) -> bool:
+        """Convenience wrapper: evaluate exit using ctx.current_price."""
+        should, _ = self.evaluate_exit(ctx, ctx.current_price)
+        return should
+
+    def evaluate_exit(self, ctx: PositionContext, current_price: float) -> tuple[bool, str]:
+        """
+        Evaluate if a position should be closed or partially closed.
+
+        Returns (should_exit, reason).
+        """
+        self.update_high_water_mark(ctx, current_price)
+
+        # 1. Partial Profit Check (R2)
+        if self.should_partial_exit(ctx, current_price):
+            log.info("exit_signal_partial_profit", symbol=ctx.symbol, price=current_price)
+            return True, "partial_profit_r2"
+
+        # 2. Trailing Stop Check (R1 from High)
+        if self.should_trailing_stop(ctx, current_price):
+            log.info("exit_signal_trailing_stop", symbol=ctx.symbol, price=current_price)
+            return True, "trailing_stop"
+
+        # 3. Hard Stop Loss (from entry)
+        if current_price <= (ctx.entry_price - 1.5 * ctx.atr_at_entry):
+            log.info("exit_signal_hard_stop", symbol=ctx.symbol, price=current_price)
+            return True, "hard_stop"
+
+        return False, "hold"
 
     # ------------------------------------------------------------------
     # Model-based overlay (stub until retrained)
